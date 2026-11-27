@@ -78,7 +78,8 @@ def read_trades(path):
     if not rows:
         return None
     t = pd.DataFrame(rows, columns=["created", "yes", "contracts", "taker", "block"])
-    t["ts"] = pd.to_datetime(t.created, utc=True, format="ISO8601").astype("int64") // 1000     # microseconds
+    # microseconds, whatever resolution this pandas version parses to (pandas 3 picks microseconds itself)
+    t["ts"] = pd.to_datetime(t.created, utc=True, format="ISO8601").dt.as_unit("us").astype("int64")
     t["yes_cents"] = (t.yes.astype(float) * 100).round(4)
     t["contracts"] = t.contracts.astype(float)
     t["taker_yes"] = t.taker == "yes"
