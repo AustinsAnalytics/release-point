@@ -2,7 +2,15 @@
 (async () => {
   "use strict";
   const { el, frame, crosshair, path, table, showTip, hideTip, register, css, fmt, niceTicks } = window.RP;
-  const D = await (await fetch("data/release.json", { cache: "no-cache" })).json();
+  let D;
+  try {
+    const res = await fetch("data/release.json", { cache: "no-cache" });
+    if (!res.ok) throw new Error(res.status);
+    D = await res.json();
+  } catch (e) {
+    for (const c of document.querySelectorAll(".chart")) c.textContent = "The figures did not load. Reload the page to try again.";
+    return;
+  }
   const S26 = D.seasons["2026"], S25 = D.seasons["2025"];
   const G = D.grid;
   const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -11,10 +19,15 @@
     return (v > 0 ? "+" : v < 0 ? "−" : "") + s + " s";
   };
   const pct = (v, d = 0) => (100 * v).toFixed(d) + "%";
+  const secs = (v, d = 1) => (v == null ? "over 60 s" : v.toFixed(d) + " s");     // a time to halfway; null = past a minute
 
-  /* mark-level tooltip helper: a transparent target bigger than the mark, on hover and keyboard focus */
+  /* mark-level tooltip helper: a transparent target bigger than the mark, on hover and keyboard focus. One tab stop
+     per chart: the arrow keys (and Home/End) move between its marks. */
   function target(parent, attrs, rows, title) {
-    const r = el("rect", { ...attrs, fill: "transparent", tabindex: 0, class: "mark-hit" }, parent);
+    const first = !parent.querySelector(".mark-hit");
+    const label = (title ? title + ": " : "") + rows.map((x) => `${x.value} ${x.label}`).join("; ");
+    const r = el("rect", { ...attrs, fill: "transparent", tabindex: first ? 0 : -1, class: "mark-hit", role: "img",
+      "aria-label": label }, parent);
     const show = (e) => {
       const b = r.getBoundingClientRect();
       showTip(e?.clientX ?? b.left + b.width / 2, e?.clientY ?? b.top, rows, title);
@@ -23,6 +36,16 @@
     r.addEventListener("focus", () => show());
     r.addEventListener("pointerleave", hideTip);
     r.addEventListener("blur", hideTip);
+    r.addEventListener("keydown", (e) => {
+      const marks = [...parent.querySelectorAll(".mark-hit")], i = marks.indexOf(r);
+      const j = { ArrowRight: i + 1, ArrowDown: i + 1, ArrowLeft: i - 1, ArrowUp: i - 1, Home: 0, End: marks.length - 1 }[e.key];
+      if (j === undefined) return;
+      e.preventDefault();
+      const next = marks[Math.max(0, Math.min(marks.length - 1, j))];
+      r.setAttribute("tabindex", -1);
+      next.setAttribute("tabindex", 0);
+      next.focus();
+    });
     return r;
   }
 
@@ -83,10 +106,18 @@
       const io = new IntersectionObserver((es) => { if (es.some((e) => e.isIntersecting)) { play(); io.disconnect(); } }, { threshold: 0.4 });
       io.observe(host);
     }
-    document.getElementById("replay").onclick = play;
-    table(host, ["Seconds", "Price (¢)", "Taker", "Contracts"],
-      h.trades.filter((t) => t[0] >= -1 && t[0] <= 12).slice(0, 60).map((t) => [t[0].toFixed(3), t[1].toFixed(0), t[2] > 0 ? "bought" : "sold", t[3].toFixed(2)]),
-      "Fills from one second before the pitch to twelve after (first 60)");
+    const btn = document.getElementById("replay");
+    btn.hidden = reduce;                 // with reduced motion the figure is drawn whole, so there is nothing to replay
+    btn.onclick = play;
+    const rowsT = [];
+    for (let s0 = -8; s0 < 30; s0 += 0.5) {
+      const m = h.mid.find((x) => x[0] >= s0 - 1e-9);
+      const inBin = h.trades.filter((t) => t[0] >= s0 && t[0] < s0 + 0.5);
+      rowsT.push([`${sec(s0)}`, m ? m[1].toFixed(1) : "–", inBin.filter((t) => t[2] > 0).length, inBin.filter((t) => t[2] < 0).length,
+        inBin.reduce((a, t) => a + t[3], 0).toFixed(0)]);
+    }
+    table(host, ["From", `Trading price (¢, ${h.batting_team})`, `Fills, taker bought`, "Fills, taker sold", "Contracts"], rowsT,
+      "Every half second from eight seconds before the pitch to thirty after");
   });
 
   /* ---------------- response curve: share of the fair move priced, by seconds from the pitch ---------------- */
@@ -112,20 +143,22 @@
   register(document.getElementById("fig-response"), (host) => {
     const f = curve(host, [{ name: "2026, every pitch", data: S26.beta_all, color: css("--blue") }]);
     for (const [k, frac] of [["t50", 0.5], ["t90", 0.9]]) {
-      const t = +host.dataset[k];
+      const t = +host.dataset[k], up = frac > 0.75;      // the 90% label sits up and to the left, clear of the curve
       el("circle", { cx: f.X(t), cy: f.Y(frac), r: 4.5, fill: css("--blue"), class: "dot" }, f.g);
-      el("text", { x: f.X(t) + 9, y: f.Y(frac) + 4, class: "note-strong" }, f.g).textContent = `${pct(frac)} by ${sec(+t.toFixed(1))}`;
+      el("text", { x: f.X(t) + (up ? -8 : 9), y: f.Y(frac) + (up ? -9 : 4), class: "note-strong", "text-anchor": up ? "end" : "start" },
+        f.g).textContent = `${pct(frac)} by ${sec(+t.toFixed(1))}`;
     }
   });
 
   /* ---------------- first trade past halfway: histogram for big pitches ---------------- */
   register(document.getElementById("fig-half"), (host) => {
-    const hist = S26.half_hist.slice(0, 40), n = S26.half_hist.reduce((a, b) => a + b, 0);
+    const hist = S26.half_hist.slice(0, 40), n = S26.half_n_all;     // share of every big pitch, including those never priced
     const share = hist.map((c) => c / n);
     const top = Math.max(...share) * 100;
     const f = frame(host, { height: 260, x: [0, 20], y: [0, top * 1.12 / 100], xFmt: sec, timeBase: true,
       yTicks: niceTicks(0, top, 4).map((v) => v / 100), yFmt: (v) => +(v * 100).toFixed(1) + "%",
-      xLabel: "seconds from the pitch to the first trade past halfway", yLabel: "share of big pitches" });
+      xLabel: host.clientWidth < 480 ? "seconds to the first trade past halfway" : "seconds from the pitch to the first trade past halfway",
+      yLabel: "share of big pitches" });
     const bw = f.X(0.5) - f.X(0) - 2;
     share.forEach((v, i) => {
       const x = f.X(i * 0.5) + 1, y = f.Y(v), h0 = f.Y(0) - y;
@@ -143,7 +176,7 @@
   register(document.getElementById("fig-kinds"), (host) => {
     const ks = S26.kinds.slice().sort((a, b) => a.half_median - b.half_median);
     const rowH = 46, height = ks.length * rowH + 62;
-    const left = Math.min(150, host.clientWidth * 0.3);
+    const left = Math.max(100, Math.min(150, host.clientWidth * 0.3));
     const f = frame(host, { height, x: [0, 30], y: [0, ks.length], yTicks: [], xFmt: sec, timeBase: true, margin: { left },
       xLabel: "seconds from the pitch" });
     const blue = css("--blue"), red = css("--red");
@@ -152,16 +185,16 @@
       el("line", { x1: f.m.left, x2: f.W - f.m.right, y1: yy, y2: yy, class: "grid" }, f.g);
       el("text", { x: f.m.left - 12, y: yy - 2, class: "note-strong", "text-anchor": "end" }, f.g).textContent = k.kind;
       el("text", { x: f.m.left - 12, y: yy + 13, class: "tick", "text-anchor": "end" }, f.g).textContent = `${k.n.toLocaleString()} pitches`;
-      el("line", { x1: f.X(k.half_q25), x2: f.X(Math.min(30, k.half_q75)), y1: yy, y2: yy, stroke: blue, "stroke-width": 2, "stroke-linecap": "round" }, f.g);
+      el("line", { x1: f.X(k.half_q25), x2: f.X(Math.min(30, k.half_q75 ?? 30)), y1: yy, y2: yy, stroke: blue, "stroke-width": 2, "stroke-linecap": "round" }, f.g);
       el("circle", { cx: f.X(Math.min(30, k.feed_median)), cy: yy, r: 5, fill: red, class: "dot" }, f.g);
       el("circle", { cx: f.X(k.half_median), cy: yy, r: 5, fill: blue, class: "dot" }, f.g);
       target(f.svg, { x: f.m.left, y: yy - rowH / 2, width: f.W - f.m.left - f.m.right, height: rowH },
-        [{ value: sec(+k.half_median.toFixed(1)), label: `market halfway (middle half ${k.half_q25.toFixed(1)}–${k.half_q75.toFixed(1)} s)`, color: blue },
+        [{ value: sec(+k.half_median.toFixed(1)), label: `market halfway (middle half ${k.half_q25.toFixed(1)}–${secs(k.half_q75)})`, color: blue },
          { value: sec(+k.feed_median.toFixed(1)), label: "MLB feed marks it final", color: red },
          { value: pct(k.ahead_of_feed), label: "priced before the feed" }], k.kind);
     });
     table(host, ["Pitch", "Pitches", "Market halfway (median)", "Middle half", "Feed final (median)", "Priced before feed"],
-      ks.map((k) => [k.kind, k.n.toLocaleString(), k.half_median.toFixed(2) + " s", `${k.half_q25.toFixed(1)}–${k.half_q75.toFixed(1)} s`, k.feed_median.toFixed(1) + " s", pct(k.ahead_of_feed)]));
+      ks.map((k) => [k.kind, k.n.toLocaleString(), secs(k.half_median, 2), `${k.half_q25.toFixed(1)}–${secs(k.half_q75)}`, k.feed_median.toFixed(1) + " s", pct(k.ahead_of_feed)]));
   });
 
   /* ---------------- calibration ---------------- */
@@ -184,8 +217,8 @@
 
   /* ---------------- maker markouts by seconds since the pitch (diverging) ---------------- */
   register(document.getElementById("fig-markouts"), (host) => {
-    const m = S26.markouts.filter((b) => b.lo < 60);
-    const lab = (b) => `${b.lo}–${b.hi}`;
+    const m = S26.markouts;
+    const lab = (b) => (b.hi == null ? `${b.lo}+` : `${b.lo}–${b.hi}`);
     const vals = m.map((b) => b.maker_c);
     const lo = Math.min(-1, Math.floor(Math.min(...vals))), hi = Math.max(1, Math.ceil(Math.max(...vals)));
     const f = frame(host, { height: 300, x: [0, m.length], y: [lo, hi], xTicks: [], yFmt: (v) => (v > 0 ? "+" : "") + fmt(v, 0) + "¢",
@@ -198,10 +231,11 @@
       const d = up ? `M${x},${y0}V${y + r}Q${x},${y} ${x + r},${y}H${x + bw - r}Q${x + bw},${y} ${x + bw},${y + r}V${y0}Z`
         : `M${x},${y0}V${y - r}Q${x},${y} ${x + r},${y}H${x + bw - r}Q${x + bw},${y} ${x + bw},${y - r}V${y0}Z`;
       el("path", { d, fill: up ? css("--blue") : css("--red") }, f.g);
-      if (i % (step < 34 ? 2 : 1) === 0 || i === m.length - 1)
+      const every = step < 20 ? 3 : step < 34 ? 2 : 1;
+      if (i % every === 0)
         el("text", { x: x + bw / 2, y: f.H - f.m.bottom + 17, class: "tick", "text-anchor": "middle" }, f.g).textContent = lab(b);
       target(f.svg, { x: f.m.left + i * step, y: f.m.top, width: step, height: f.H - f.m.top - f.m.bottom },
-        [{ value: (v > 0 ? "+" : "") + fmt(v, 2) + "¢", label: "per contract to the maker" }, { value: pct(b.share, 1), label: "of all contracts" }], `${lab(b)} s after the pitch`);
+        [{ value: (v > 0 ? "+" : "") + fmt(v, 2) + "¢", label: "per contract to the maker" }, { value: pct(b.share, 1), label: "of contracts" }], `${lab(b)} s after the pitch`);
     });
     el("text", { x: f.W - f.m.right, y: f.H - 8, class: "axis-label", "text-anchor": "end" }, f.g).textContent = "seconds since the last pitch";
     table(host, ["Seconds since the pitch", "Makers' profit per contract", "Share of contracts"], m.map((b) => [lab(b), (b.maker_c > 0 ? "+" : "") + b.maker_c.toFixed(2) + "¢", pct(b.share, 1)]));
@@ -231,6 +265,10 @@
     curve(host, [{ name: "2025", data: S25.beta_all, color: css("--red") }, { name: "2026", data: S26.beta_all, color: css("--blue") }], { height: 290, x: [-5, 60] });
   });
 
+  // "2026-04" is April 2026; "2026-post" is that season's postseason
+  const monthShort = (m) => (m.endsWith("post") ? "Post" : new Date(m + "-15").toLocaleString("en-US", { month: "short" }));
+  const monthLong = (m) => (m.endsWith("post") ? `${m.slice(0, 4)} postseason` : new Date(m + "-15").toLocaleString("en-US", { month: "long", year: "numeric" }));
+
   register(document.getElementById("fig-monthly"), (host) => {
     // one time axis across both seasons; the off-season is a gap, not a line
     const rows = [].concat(S25 ? S25.monthly.map((r) => ({ ...r, season: "2025" })) : [], S26.monthly.map((r) => ({ ...r, season: "2026" })));
@@ -251,19 +289,18 @@
       }
       idx.forEach(([i, r]) => {
         if (!narrow || i % 2 === 0)        // on a phone, every other month across both seasons
-          el("text", { x: f.X(i), y: f.H - f.m.bottom + 17, class: "tick", "text-anchor": "middle" }, f.g).textContent =
-            new Date(r.month + "-15").toLocaleString("en-US", { month: "short" });
+          el("text", { x: f.X(i), y: f.H - f.m.bottom + 17, class: "tick", "text-anchor": "middle" }, f.g).textContent = monthShort(r.month);
         target(f.svg, { x: f.X(i) - 14, y: f.m.top, width: 28, height: f.H - f.m.top - f.m.bottom },
-          [{ value: r.half_median.toFixed(2) + " s", label: `every big pitch (${r.n.toLocaleString()})`, color: series[0].color },
-           ...(r.band_half_median != null ? [{ value: r.band_half_median.toFixed(2) + " s", label: `equally busy (${r.band_n.toLocaleString()})`, color: series[1].color }] : []),
+          [{ value: secs(r.half_median, 2), label: `every big pitch (${r.n.toLocaleString()})`, color: series[0].color },
+           ...(r.band_half_median != null ? [{ value: secs(r.band_half_median, 2), label: `equally busy (${r.band_n.toLocaleString()})`, color: series[1].color }] : []),
            { value: r.activity.toFixed(2), label: "orders a second before the pitch (median)" }],
-          new Date(r.month + "-15").toLocaleString("en-US", { month: "long", year: "numeric" }));
+          monthLong(r.month));
       });
       const mid = idx[Math.floor((idx.length - 1) / 2)][0];
       el("text", { x: f.X(mid), y: f.H - 12, class: "axis-label", "text-anchor": "middle" }, f.g).textContent = season;
     }
     table(host, ["Month", "Every big pitch", "Equally busy markets", "Orders a second before (median)", "Big pitches"],
-      rows.map((r) => [r.month, r.half_median.toFixed(2) + " s", r.band_half_median != null ? r.band_half_median.toFixed(2) + " s" : "too few", r.activity.toFixed(2), r.n.toLocaleString()]));
+      rows.map((r) => [monthLong(r.month), secs(r.half_median, 2), r.band_n >= 50 ? secs(r.band_half_median, 2) : "too few", r.activity.toFixed(2), r.n.toLocaleString()]));
   });
 
   /* ---------------- the simulation check ---------------- */

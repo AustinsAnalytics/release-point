@@ -69,7 +69,9 @@
       det.appendChild(s);
       host.after(det);
     }
-    det.querySelector("table")?.remove();
+    det.querySelector(".table-scroll")?.remove();
+    const wrap = document.createElement("div");
+    wrap.className = "table-scroll";       // a wide table scrolls inside its own box on a phone, not the page
     const t = document.createElement("table");
     if (caption) {
       const c = document.createElement("caption");
@@ -92,7 +94,8 @@
       }
       t.appendChild(row);
     }
-    det.appendChild(t);
+    wrap.appendChild(t);
+    det.appendChild(wrap);
   }
 
   /* ---------- frame: svg, margins, axes, grid ---------- */
@@ -101,7 +104,7 @@
     host.replaceChildren();
     const W = Math.max(280, host.clientWidth);
     const m = { top: yLabel ? 32 : 18, right: 18, bottom: timeBase ? 58 : 44, left: 52, ...margin };
-    const svg = el("svg", { width: W, height, viewBox: `0 0 ${W} ${height}`, role: "img" }, host);
+    const svg = el("svg", { width: W, height, viewBox: `0 0 ${W} ${height}`, role: "group" }, host);
     const name = host.closest("figure")?.querySelector(".fig-title")?.textContent;
     if (name) svg.setAttribute("aria-label", `${name}. The values are in the data table below the chart.`);
     const X = lin(x[0], x[1], m.left, W - m.right), Y = lin(y[0], y[1], height - m.bottom, m.top);
@@ -170,7 +173,7 @@
     });
   }
 
-  const path = (pts, X, Y) => pts.filter((p) => p && isFinite(p[1]))
+  const path = (pts, X, Y) => pts.filter((p) => p && Number.isFinite(p[1]))
     .map((p, i) => `${i ? "L" : "M"}${X(p[0]).toFixed(1)},${Y(p[1]).toFixed(1)}`).join("");
 
   /* ---------- registry: draw on load, redraw on resize/theme ---------- */

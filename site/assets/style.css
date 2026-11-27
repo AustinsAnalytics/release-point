@@ -5,7 +5,7 @@
   --paper-2: #ece5d6;
   --ink: #1d1a16;
   --ink-2: #554d42;
-  --ink-3: #847a6c;
+  --ink-3: #6f6558;
   --rule: #cfc3ad;
   --grid: #e3dbcb;
   --blue: #2a5d9e;
@@ -25,7 +25,7 @@
     --paper-2: #1c1916;
     --ink: #ece3cf;
     --ink-2: #b7ac97;
-    --ink-3: #887e6f;
+    --ink-3: #968c7c;
     --rule: #3b342c;
     --grid: #262019;
     --blue: #5a8ddb;
@@ -42,7 +42,7 @@
   --paper-2: #1c1916;
   --ink: #ece3cf;
   --ink-2: #b7ac97;
-  --ink-3: #887e6f;
+  --ink-3: #968c7c;
   --rule: #3b342c;
   --grid: #262019;
   --blue: #5a8ddb;
@@ -81,6 +81,9 @@ a:hover { text-decoration-thickness: 2px; }
   border: 1px solid var(--rule); border-radius: 999px; padding: 7px 12px; cursor: pointer;
 }
 .theme:hover, .theme:focus-visible { border-color: var(--ink-2); color: var(--ink); }
+.theme:focus-visible, .replay:focus-visible, details.data summary:focus-visible, a:focus-visible {
+  outline: 2px solid var(--blue); outline-offset: 2px;
+}
 
 /* ---------- opening ---------- */
 header.open { max-width: 1080px; margin: 0 auto; padding: 56px 24px 8px; }
@@ -149,11 +152,16 @@ figcaption strong { color: var(--ink); font-weight: 600; }
 /* data tables */
 details.data { margin-top: 6px; font: 400 13px/1.4 var(--sans); color: var(--ink-2); }
 details.data summary { cursor: pointer; width: fit-content; letter-spacing: .08em; text-transform: uppercase; font-size: 11px; font-weight: 600; }
+details.data .table-scroll { max-width: 100%; overflow-x: auto; }
 details.data table { border-collapse: collapse; margin: 8px 0 4px; font-variant-numeric: tabular-nums; }
 details.data caption { text-align: left; padding-bottom: 4px; color: var(--ink-3); }
 details.data th, details.data td { padding: 3px 14px 3px 0; text-align: right; border-bottom: 1px solid var(--grid); }
 details.data th:first-child, details.data td:first-child { text-align: left; }
 details.data th { color: var(--ink-3); font-weight: 600; }
+@media (max-width: 480px) {
+  details.data { font-size: 12.5px; }
+  details.data th, details.data td { padding-right: 8px; }
+}
 
 /* ---------- readings (stat tiles) ---------- */
 .readings {
