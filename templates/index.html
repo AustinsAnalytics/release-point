@@ -48,7 +48,7 @@
 <div class="readings">
   <div class="reading"><div class="v">{{half_med}}<small>s</small></div><div class="l">median time from a big pitch to the first trade more than halfway to its new price</div></div>
   <div class="reading"><div class="v">{{ahead_feed}}</div><div class="l">of big pitches traded past halfway before MLB&rsquo;s own feed marked the result final</div></div>
-  <div class="reading"><div class="v">{{beta60_big}}&times;</div><div class="l">the market&rsquo;s move one minute after a big pitch, as a multiple of the fair move</div></div>
+  <div class="reading"><div class="v">{{speedup}}&times;</div><div class="l">faster than in 2025, when a big pitch took a median {{h25}} seconds to trade past halfway</div></div>
   <div class="reading"><div class="v">{{given_back}}</div><div class="l">of market makers&rsquo; trading profit handed to faster traders in the five seconds after a pitch that moved the price two points or more</div></div>
 </div>
 
@@ -154,14 +154,14 @@
 <section id="rhythm">
   <h2><span class="no">V</span>Rhythm</h2>
   <div class="prose">
-    <p>The pitch clock gives this market something a stock market sees a few times a year: news on a timetable. Makers know a pitch is coming roughly every twenty seconds, and the tape shows them waiting for it. Trading thins in the seconds before the pitch, to {{pulse_before}} orders a second per game in the last half second against {{pulse_base}} in the quiet middle of the interval, then jumps to {{pulse_peak}} a second {{pulse_peak_t}} seconds after it.</p>
+    <p>The pitch clock gives this market something a stock market sees a few times a year: news on a timetable. Everyone knows when the next piece of news is coming, but nobody knows which pitch will matter, and the tape shows it. Across all pitches, trading barely changes as the pitch approaches: {{pulse_before}} orders a second per game in the last half second against {{pulse_base}} in the middle of the interval. Around a big pitch, it holds at about {{big_before}} a second until the ball is on its way, then doubles, to {{big_peak}} a second {{big_peak_t}} seconds after the pitch, and takes several seconds to settle (Fig. 7).</p>
   </div>
 </section>
 <figure class="plate">
   <div class="plate-inner">
-    <div class="fig-head"><span class="fig-no">Fig. 7</span><span class="fig-title">Orders per second around the pitch</span></div>
+    <div class="fig-head"><span class="fig-no">Fig. 7</span><span class="fig-title">Orders per second around a big pitch</span></div>
     <div class="chart" id="fig-pulse"></div>
-    <figcaption>2026. Left of the pitch, time until it; right, time since it. Each half-second is divided by the time games actually spent there, so long breaks between innings do not inflate the edges.</figcaption>
+    <figcaption>Every 2026 pitch that moved fair value by four points or more ({{big_n}} of them), with every taker order from ten seconds before to twenty after, in quarter-second bins, per game.</figcaption>
   </div>
 </figure>
 
@@ -181,8 +181,9 @@
 <figure class="plate">
   <div class="plate-inner">
     <div class="fig-head"><span class="fig-no">Fig. 9</span><span class="fig-title">Median seconds from a big pitch to the first trade past halfway, by month</span></div>
-    <div class="legend"><span><i class="dot" style="background:var(--red)"></i>2025</span><span><i class="dot" style="background:var(--blue)"></i>2026</span></div>
+    <div class="legend"><span><i class="dot" style="background:var(--blue)"></i>every big pitch</span><span><i class="dot" style="background:var(--red)"></i>only when the market was equally busy beforehand (1 to 2 orders a second)</span></div>
     <div class="chart" id="fig-monthly"></div>
+    <figcaption>Months with at least 50 such pitches. The equally busy line holds the market&rsquo;s activity before the pitch fixed, so the speed-up is not just more trading.</figcaption>
   </div>
 </figure>
 
