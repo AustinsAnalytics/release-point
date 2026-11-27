@@ -1,0 +1,251 @@
+"""Fill templates/index.html with numbers from the pipeline's outputs -> site/index.html. Nothing on the page is typed.
+
+    python pipeline/story.py
+
+Refuses to write the page if any {{placeholder}} is left without a value.
+"""
+import json
+import os
+import re
+from datetime import date
+
+import pandas as pd
+
+from common import DATA, OUT, ROOT
+
+SITE = ROOT / "site"
+REPO = "https://github.com/AustinsAnalytics/release-point"
+ORD = {1: "first", 2: "second", 3: "third", 4: "fourth", 5: "fifth", 6: "sixth", 7: "seventh", 8: "eighth",
+       9: "ninth", 10: "10th", 11: "11th", 12: "12th", 13: "13th"}
+
+
+def pct(x, d=0):
+    s = f"{100 * abs(x):.{d}f}%"
+    return ("−" + s) if x < 0 and float(s[:-1]) != 0 else s
+
+
+def drift_text(acc, med_F, cost_c):
+    """Say what is left to price after 30 seconds, in words that match the test's verdict."""
+    b, se = acc["drift_big"]["slope"], acc["drift_big"]["se"]
+    cents = abs(b) * med_F
+    if abs(b) > 2 * se:
+        long = (f"Almost nothing about the pitch is left to price after half a minute. The last few percent take "
+                f"longer: from thirty seconds to two minutes after a big pitch the price "
+                f"moves {'another' if b > 0 else 'back'} {pct(abs(b), 1)} of the fair move (standard error "
+                f"{pct(se, 1)}, clustered by game), about {cents:.2f}&cent; on a typical big pitch, less than the "
+                f"{cost_c:.1f}&cent; it costs to trade once.")
+        short = (f"the next 90 s add {pct(b, 1)} of the fair move (SE {pct(se, 1)}), about {cents:.2f}&cent;, "
+                 f"under the cost of one trade")
+    else:
+        long = (f"Nothing about the pitch is left to price after half a minute. From thirty seconds to two minutes "
+                f"after a big pitch the price moves {pct(b, 1)} of the fair move "
+                f"(standard error {pct(se, 1)}, clustered by game), zero within the noise.")
+        short = f"the next 90 s add {pct(b, 1)} of the fair move (SE {pct(se, 1)}), zero within the noise"
+    return long, short
+
+
+def outcome_text(acc):
+    b, se = acc["outcome_big"]["slope"], acc["outcome_big"]["se"]
+    head = ("And the final result shows nothing the price at thirty seconds had missed: regressing the result on the "
+            "fair move, which everyone knew at the time, gives a slope of ")
+    if abs(b) > 2 * se:
+        return (f"Regressing the final result on the fair move, which everyone knew at the time, gives a slope of "
+                f"{signed(b, 3)} (standard error {se:.3f}, clustered by game): the price at thirty seconds had "
+                f"{'not yet absorbed all' if b > 0 else 'overshot'} of it.")
+    return f"{head}{signed(b, 3)} (standard error {se:.3f}, clustered by game), zero within the noise."
+
+
+def calibration_text(cal):
+    b = min(cal, key=lambda r: abs((r["lo"] + r["hi"]) / 2 - 75))
+    return (f"Teams the market priced between {b['lo']} and {b['hi']} cents before a pitch ({b['price']:.0f} on "
+            f"average) went on to win {pct(b['won'], 1)} of the time (95% interval {pct(b['ci'][0], 1)}&ndash;"
+            f"{pct(b['ci'][1], 1)})")
+
+
+def millions(n):
+    if n >= 1e9:
+        return f"{n / 1e9:.1f} billion"
+    if n >= 1e6:
+        return f"{n / 1e6:.1f} million"
+    return f"{n:,.0f}"
+
+
+def signed(x, d=2):
+    return ("−" if x < 0 else "") + f"{abs(x):.{d}f}"
+
+
+def s1(x):
+    return f"{x:.1f}"
+
+
+def nice_date(s):
+    d = date.fromisoformat(s)
+    return f"{d.strftime('%B')} {d.day}, {d.year}"
+
+
+def kinds_sentence(k):
+    hr, so, bb, hit, out = (k.get(x) for x in ("Home run", "Strikeout", "Walk or HBP", "Hit", "Out in play"))
+    parts = []
+    fastest = min(k, key=lambda x: k[x]["half_median"])
+    if hr:
+        lead = "Home runs are priced fastest" if fastest == "Home run" else "Home runs are priced quickly"
+        parts.append(f"{lead}, a median {s1(hr['half_median'])} seconds after the pitch, while MLB&rsquo;s feed does "
+                     f"not mark the play final until {s1(hr['feed_median'])} seconds after it.")
+    if so and bb:
+        parts.append(f"Strikeouts and walks are over the moment the pitch is caught, and the market is past halfway in "
+                     f"{s1(so['half_median'])} and {s1(bb['half_median'])} seconds, against the feed&rsquo;s "
+                     f"{s1(so['feed_median'])} and {s1(bb['feed_median'])}.")
+    if hit and out:
+        slow = "Outs in play take longest" if out["half_median"] >= max(v["half_median"] for v in k.values()) \
+            else "Outs in play are slower"
+        parts.append(f"{slow}, {s1(out['half_median'])} seconds: the ball has to be caught or thrown before the play "
+                     f"is over. Hits are priced in {s1(hit['half_median'])}.")
+    return " ".join(parts)
+
+
+def seasons_paragraph(r25, r26, m25, m26, first_day):
+    tpg25, tpg26 = m25["trades"] / m25["games_traded"], m26["trades"] / m26["games_traded"]
+    h25, h26 = r25["speed"]["half_time"]["median"], r26["speed"]["half_time"]["median"]
+    t25, t26 = r25["speed"]["t50"]["est"], r26["speed"]["t50"]["est"]
+    g25, g26 = r25["speed_tax"]["given_back"], r26["speed_tax"]["given_back"]
+    busier = "busier" if tpg26 > tpg25 else "quieter"
+    out = [f"These markets are young: Kalshi&rsquo;s archive of MLB game markets begins on {nice_date(first_day)}. "
+           f"In their second season they were {busier}, {tpg26:,.0f} trades a game against {tpg25:,.0f}."]
+    if h26 < h25 and t26 < t25:
+        out.append(f"They were also faster: the median time from a big pitch to the first trade past halfway fell from "
+                   f"{s1(h25)} seconds in 2025 to {s1(h26)} in 2026, and the trading price reached halfway in "
+                   f"{s1(t26)} seconds against {s1(t25)} (Fig. 8).")
+    elif h26 > h25 and t26 > t25:
+        out.append(f"They were not faster: the median time from a big pitch to the first trade past halfway was "
+                   f"{s1(h25)} seconds in 2025 and {s1(h26)} in 2026, and the trading price reached halfway in "
+                   f"{s1(t25)} and {s1(t26)} seconds (Fig. 8).")
+    else:
+        out.append(f"Speed changed little: the median time from a big pitch to the first trade past halfway was "
+                   f"{s1(h25)} seconds in 2025 and {s1(h26)} in 2026, and the trading price reached halfway in "
+                   f"{s1(t25)} and {s1(t26)} seconds (Fig. 8).")
+    out.append(f"Makers handed back {pct(g25)} of their ordinary trading profit in the five seconds after big pitches "
+               f"in 2025, and {pct(g26)} in 2026.")
+    return " ".join(out)
+
+
+def build():
+    res = json.loads((OUT / "results.json").read_text())
+    sim = json.loads((OUT / "simulation.json").read_text())
+    site = json.loads((SITE / "data" / "release.json").read_text())
+    r26, r25 = res["2026"], res.get("2025")
+    m26, m25 = site["seasons"]["2026"]["meta"], site["seasons"].get("2025", {}).get("meta")
+    sp, acc, tax = r26["speed"], r26["accuracy"], r26["speed_tax"]
+    k = sp["by_kind"]
+    h = site["hero"]
+
+    p = pd.read_parquet(DATA / "interim" / "2026" / "pitches.parquet", columns=["game_pk", "t_start", "t_end", "in_play"])
+    delay = (p.t_end - p.t_start) / 1e6
+    gap_median = (p.sort_values(["game_pk", "t_start"]).groupby("game_pk").t_start.diff() / 1e6).median()
+    mk26 = pd.read_parquet(DATA / "interim" / "2026" / "markets.parquet")
+    mk25 = pd.read_parquet(DATA / "interim" / "2025" / "markets.parquet") if r25 else None
+    first_day = None
+    if mk25 is not None:
+        g25 = pd.read_parquet(DATA / "interim" / "2025" / "games.parquet", columns=["game_pk", "official_date"])
+        first_day = g25[g25.game_pk.isin(mk25.game_pk)].official_date.min()
+    n_tests = sum(len(re.findall(r"^def test_", f.read_text(), re.M)) for f in (ROOT / "tests").glob("test_*.py"))
+
+    post = h["p_ref"] + h["F"]
+    team = h["batting_team"]
+    half_inn = "top" if h["top"] else "bottom"
+    stage = {"R": "", "F": " in the Wild Card Series", "D": " in the Division Series", "L": " in the League Championship Series",
+             "W": " in the World Series"}[h["game_type"]]
+    pulse = r26["pulse"]
+    lo = pulse["lo"]
+    after = [(lo[i] + 0.25, v) for i, v in enumerate(pulse["since"]) if lo[i] < 10]
+    peak_t, peak = max(after, key=lambda x: x[1])
+    def sim_pct(x):
+        return f"{100 * abs(x - 1):.1f}%"
+
+    who = r26["who"]
+    act = who["by_activity"]
+    post_sentence = ""
+    if who["post_half_median"] is not None and who["post_n"] >= 50:
+        faster = who["post_half_median"] < who["regular_half_median"]
+        post_sentence = (f" Postseason games, the busiest markets of all, were {'faster still' if faster else 'no faster'}: "
+                         f"{s1(who['post_half_median'])} seconds over {who['post_n']:,} big pitches, against "
+                         f"{s1(who['regular_half_median'])} in the regular season.")
+
+    def dollars(x):
+        return f"{x / 1e6:.1f} million" if abs(x) >= 1e6 else f"{x:,.0f}"
+
+    ev26 = pd.read_parquet(OUT / "2026" / "events.parquet", columns=["F", "spread", "age", "p_ref", "clean", "last_pitch"])
+    big_F = ev26[(ev26.F.abs() >= 4) & (ev26.age <= 60) & ev26.p_ref.between(2, 98) & ev26.clean & ~ev26.last_pitch].F
+    cost = ev26.spread.median() / 2 + tax["taker_fee_c"]           # half the typical spread plus the taker fee
+    drift_long, drift_short = drift_text(acc, float(big_F.abs().median()), float(cost))
+
+    v = {
+        "loss_15": pct(tax["loss_by"]["1.5"]), "loss_3": pct(tax["loss_by"]["3"]),
+        "drift_sentence": drift_long, "drift_short": drift_short, "outcome_sentence": outcome_text(acc),
+        "cal_sentence": calibration_text(acc["calibration"]),
+        "beta60_word": ("slightly more" if acc["beta60_big"]["lo"] > 1 else "slightly less" if acc["beta60_big"]["hi"] < 1
+                        else "not different from one"),
+        "gap_median": s1(float(gap_median)),
+        "first_size": f"{who['first_size_median']:,.0f}",
+        "first_ratio": f"{who['first_size_median'] / who['order_size_median']:.1f}",
+        "first_aligned": pct(who["first_aligned"]), "first_1000": pct(who["first_size_1000"]),
+        "act_hi": s1(act["busiest"]["half_median"]), "act_lo": s1(act["quietest"]["half_median"]),
+        "act_hi_rate": f"{act['busiest']['orders_per_s']:.1f}", "act_lo_rate": f"{act['quietest']['orders_per_s']:.1f}",
+        "post_sentence": post_sentence or " ",
+        "tax_total": dollars(-tax["after_news_dollars_total"]), "rest_total": dollars(tax["rest_dollars_total"]),
+        "repo": REPO,
+        "trades26": millions(m26["trades"]), "games26": f"{m26['games_traded']:,}",
+        "contracts26": millions(m26["contracts"]), "pitches26": f"{m26['pitches']:,}",
+        "trades25": millions(m25["trades"]) if m25 else "", "games25": f"{m25['games_traded']:,}" if m25 else "",
+        "usable26": f"{r26['usable']:,}", "big26": f"{r26['big']:,}",
+        "hero_team": team,
+        "hero_title": f"{h['batter']} homers: {team} from {h['p_ref']:.0f}&cent; to {post:.0f}&cent;",
+        "hero_caption": (f"Every fill in the market on {team} winning, from eight seconds before the pitch to thirty "
+                         f"after: {h['batter']}&rsquo;s home run in the {half_inn} of the {ORD.get(h['inning'], str(h['inning']) + 'th')} "
+                         f"inning, {h['away']} at {h['home']}{stage}, {nice_date(h['date'])}. The first trade more "
+                         f"than halfway to the new price came <strong>{h['half_time']:.2f} seconds</strong> after "
+                         f"MLB&rsquo;s pitch timestamp; MLB&rsquo;s public feed marked the play final at "
+                         f"{h['feed_delay']:.1f}. Dot area is proportional to contracts."),
+        "half_med": s1(sp["half_time"]["median"]), "half_med_raw": f"{sp['half_time']['median']:.3f}",
+        "ahead_feed": pct(sp["ahead_of_feed"]["est"]), "ahead_lo": pct(sp["ahead_of_feed"]["lo"]),
+        "ahead_hi": pct(sp["ahead_of_feed"]["hi"]),
+        "beta60_big": f"{acc['beta60_big']['est']:.2f}", "beta60_lo": f"{acc['beta60_big']['lo']:.2f}",
+        "beta60_hi": f"{acc['beta60_big']['hi']:.2f}",
+        "given_back": pct(tax["given_back"]), "gb_lo": pct(tax["given_back_ci"][0]), "gb_hi": pct(tax["given_back_ci"][1]),
+        "gb_dollars": f"{-tax['after_news_dollars_per_game']:,.0f}",
+        "beta_m5": pct(abs(sp["beta_at"]["-5"]["est"]), 1),
+        "t50": s1(sp["t50"]["est"]), "t50_lo": s1(sp["t50"]["lo"]), "t50_hi": s1(sp["t50"]["hi"]),
+        "t50_raw": f"{sp['t50']['est']:.3f}", "t90": s1(sp["t90"]["est"]), "t90_raw": f"{sp['t90']['est']:.3f}",
+        "within1": pct(sp["half_time"]["within_1s"]), "within2": pct(sp["half_time"]["within_2s"]),
+        "within5": pct(sp["half_time"]["within_5s"]), "never60": pct(sp["half_time"]["never_60s"], 1),
+        "feed_called": s1(delay[~p.in_play].median()), "feed_inplay": s1(delay[p.in_play].median()),
+        "kinds_sentence": kinds_sentence(k),
+        "sim_lag": f"{sim['half_minus_true_median']:.2f}", "sim_gap": pct(sim["curve_max_gap"]),
+        "sim_markout": sim_pct(sim["markout_ratio"]), "sim_games": f"{sim['games']:,}",
+        "drift": signed(acc["drift_big"]["slope"], 3), "drift_se": f"{acc['drift_big']['se']:.3f}",
+        "outcome": signed(acc["outcome_big"]["slope"], 3), "outcome_se": f"{acc['outcome_big']['se']:.3f}",
+        "brier_m": f"{acc['brier_market']:.4f}", "brier_a": f"{acc['brier_average_team']:.4f}",
+        "maker_c": f"{tax['maker_c_per_contract']:.2f}", "maker_fee_c": f"{tax['maker_fee_c']:.2f}", "after_news_share": pct(tax["after_news_share_contracts"], 1),
+        "after_news_c": f"{-tax['after_news_maker_c']:.2f}", "rest_c": f"{tax['rest_maker_c']:.2f}",
+        "snipe_share": pct(tax["snipe_share_contracts"], 1), "snipe_c": f"{tax['snipe_taker_c']:.2f}",
+        "snipe_fee_c": f"{tax['snipe_taker_fee_c']:.2f}",
+        "pulse_before": f"{pulse['until'][0]:.2f}", "pulse_base": f"{pulse['baseline']:.2f}",
+        "pulse_peak": f"{peak:.2f}", "pulse_peak_t": f"{peak_t:.1f}",
+        "seasons_paragraph": seasons_paragraph(r25, r26, m25, m26, first_day) if r25 else "",
+        "placebo": pct(r26["placebo"]["est"], 2), "placebo_lo": pct(r26["placebo"]["lo"], 2),
+        "placebo_hi": pct(r26["placebo"]["hi"], 2),
+        "settle26": f"{int(mk26.settles_right.sum()):,} of {len(mk26):,}",
+        "settle25": f"{int(mk25.settles_right.sum()):,} of {len(mk25):,}" if mk25 is not None else "",
+        "n_tests": str(n_tests),
+    }
+    for tpl, dest in (("index.html", SITE / "index.html"), ("README.md", ROOT / "README.md")):
+        text = (ROOT / "templates" / tpl).read_text()
+        missing = sorted(set(re.findall(r"\{\{(\w+)\}\}", text)) - {key for key, val in v.items() if val != ""})
+        if missing and not os.environ.get("DRAFT"):
+            raise SystemExit(f"{tpl}: no value for: {', '.join(missing)}")
+        fill = {**v, **{key: "[pending]" for key in missing}}     # DRAFT=1 previews while a season is downloading
+        dest.write_text(re.sub(r"\{\{(\w+)\}\}", lambda m: str(fill[m.group(1)]), text))
+    print(f"site/index.html and README.md written ({len(v)} numbers)", flush=True)
+
+
+if __name__ == "__main__":
+    build()
