@@ -5,7 +5,8 @@
 Pitches enter the main sample if the market traded in the minute before the pitch, the pre-pitch price is between 2
 and 98 cents, nothing outside the pitch changed the state before the next pitch, and the pitch did not end the game.
 "Big" pitches moved fair value by at least 4 points. Intervals resample whole games (500 draws), because pitches in
-the same game share a market.
+the same game share a market. A big pitch that never traded past halfway within a minute counts as slower than a minute
+in every median and share of the time to halfway, not as missing.
 """
 import json
 
@@ -21,6 +22,16 @@ B = 500
 BIG = 4.0
 COLS = [f"m{g:+g}" for g in GRID]
 KINDS = ["Home run", "Hit", "Out in play", "Strikeout", "Walk or HBP"]
+
+
+NEVER = 999.0              # stands in for "not past halfway within a minute": slower than any time observed
+
+
+def hq(s, q=0.5):
+    """Quantile of times to halfway, counting pitches that never got there within a minute as slower than any that did.
+    NaN when the quantile itself is beyond a minute."""
+    v = float(s.fillna(NEVER).quantile(q))
+    return v if v <= 60 else float("nan")
 
 
 def usable(ev):
@@ -93,8 +104,9 @@ def speed(ev, big):
         sk = game_sums(d)
         ek = sk[[f"rf_{c}" for c in COLS]].sum().to_numpy() / sk[[f"ff_{c}" for c in COLS]].sum().to_numpy()
         by_kind[k] = {"n": int(len(d)), "median_F": float(d.F.abs().median()),
-                      "half_median": float(d.half_time.median()), "half_q25": float(d.half_time.quantile(.25)),
-                      "half_q75": float(d.half_time.quantile(.75)), "feed_median": float(d.feed_delay.median()),
+                      "half_median": hq(d.half_time), "half_q25": hq(d.half_time, .25),
+                      "half_q75": hq(d.half_time, .75), "never_60s": float(d.half_time.isna().mean()),
+                      "feed_median": float(d.feed_delay.median()),
                       "ahead_of_feed": float((d.half_time < d.feed_delay).mean()),
                       "beta60": float(ek[k60]), "curve": [round(float(v), 4) for v in ek]}
     return {
@@ -107,12 +119,12 @@ def speed(ev, big):
                 "hi": float(np.nanpercentile(t90, 97.5))},
         "beta_at": {f"{g:g}": {"est": float(e_all[i]), "lo": float(lo_all[i]), "hi": float(hi_all[i])}
                     for i, g in enumerate(GRID) if g in (-5, 0, 0.5, 1, 2, 5, 10, 30, 60)},
-        "half_time": {"n": int(ht.notna().sum()), "median": float(ht.median()), "q25": float(ht.quantile(.25)),
-                      "q75": float(ht.quantile(.75)), "within_1s": float((ht < 1).mean()),
+        "half_time": {"n": int(ht.notna().sum()), "n_all": int(len(ht)), "median": hq(ht), "q25": hq(ht, .25),
+                      "q75": hq(ht, .75), "within_1s": float((ht < 1).mean()),
                       "within_2s": float((ht < 2).mean()), "within_5s": float((ht < 5).mean()),
                       "never_60s": float(ht.isna().mean()),
                       "hist": np.histogram(ht.dropna().clip(upper=29.99), np.arange(0, 30.5, 0.5))[0].tolist()},
-        "half_median_ci": boot_stat(big, lambda d: d.half_time.median()),
+        "half_median_ci": boot_stat(big, lambda d: hq(d.half_time)),
         "ahead_of_feed": boot_stat(big, lambda d: (d.half_time < d.feed_delay).mean()),
         "feed_delay_median": float(big.feed_delay.median()),
         "by_kind": by_kind,
@@ -169,6 +181,15 @@ def speed_tax(mk, n_games):
     hit = mk[mk.fast & mk.news]
     quiet = mk[~(mk.fast & mk.news)]
     snipe = hit[hit.aligned]
+
+    def given_back(w):
+        """Share of makers' profit on other trades lost on trades within w seconds of a pitch that moved fair value 2+
+        points (before fees)."""
+        f = (mk.since_bin <= np.searchsorted(SINCE_BINS, w) - 1) & mk.news
+        return float(-mk.loc[f, "maker_60"].sum() / mk.loc[~f, "maker_60"].sum())
+
+    net_rest = quiet.maker_60.sum() - quiet.fee_maker.sum()
+    net_hit = hit.maker_60.sum() - hit.fee_maker.sum()
     per_game = mk.groupby(["game_pk"]).apply(lambda g: pd.Series({
         "after_news": g.loc[g.fast & g.news, "maker_60"].sum(), "rest": g.loc[~(g.fast & g.news), "maker_60"].sum(),
         "contracts": g.contracts.sum()}), include_groups=False)
@@ -195,24 +216,32 @@ def speed_tax(mk, n_games):
         "rest_dollars_total": float(quiet.maker_60.sum() / 100),
         # the same split at Kalshi's full standard fee (no 0.5 multiplier), to show nothing hinges on the fee
         "snipe_taker_fee_c_full_rate": float(2 * snipe.fee_taker.sum() / snipe.contracts.sum()),
+        # after the maker fee: what makers keep on ordinary trades, and the share of it lost after news
+        "rest_maker_net_c": float(net_rest / quiet.contracts.sum()),
+        "after_news_maker_net_c": float(net_hit / hit.contracts.sum()),
+        "given_back_net": float(-net_hit / net_rest) if net_rest > 0 else None,
+        # does the answer hinge on the five-second window? the same share for windows of 2 to 30 seconds
+        "given_back_by_window": {f"{w:g}": given_back(w) for w in (2, 5, 10, 15, 30)},
     }
 
 
 def who_and_when(big):
     """Who trades first, and whether the market is faster when it is busier or the game matters more."""
-    d = big[big.half_time.notna()]
-    terc = pd.qcut(d.activity.rank(method="first"), 3, labels=["quietest", "middle", "busiest"])
-    by_act = {str(k): {"n": int(len(g)), "half_median": float(g.half_time.median()),
-                       "orders_per_s": float(g.activity.median())} for k, g in d.groupby(terc, observed=True)}
-    post = d.game_type != "R"
+    d = big[big.half_time.notna()]                    # pitches with a first order past halfway, for who placed it
+    terc = pd.qcut(big.activity.rank(method="first"), 3, labels=["quietest", "middle", "busiest"])
+    by_act = {str(k): {"n": int(len(g)), "half_median": hq(g.half_time),
+                       "orders_per_s": float(g.activity.median())} for k, g in big.groupby(terc, observed=True)}
+    post = big.game_type != "R"
     return {
         "first_size_median": float(d.half_size.median()),
         "order_size_median": float(d.drop_duplicates("game_pk").game_order_median.median()),
+        # the first order against the median order in its own game, pitch by pitch
+        "first_ratio_median": float((d.half_size / d.game_order_median).median()),
         "first_aligned": float(d.half_aligned.mean()),
         "first_size_1000": float((d.half_size >= 1000).mean()),
         "by_activity": by_act,
-        "regular_half_median": float(d[~post].half_time.median()), "regular_n": int((~post).sum()),
-        "post_half_median": float(d[post].half_time.median()) if post.any() else None, "post_n": int(post.sum()),
+        "regular_half_median": hq(big[~post].half_time), "regular_n": int((~post).sum()),
+        "post_half_median": hq(big[post].half_time) if post.any() else None, "post_n": int(post.sum()),
     }
 
 
@@ -245,18 +274,20 @@ BAND = (1.0, 2.0)          # orders a second in the five minutes before a pitch:
 
 
 def monthly(ev, big):
-    """Median time to halfway by month, for every big pitch and for big pitches in equally busy markets only, so a
-    speed-up can be told apart from a market that simply got busier."""
-    big = big.assign(month=pd.to_datetime(big.t0, unit="us", utc=True).dt.strftime("%Y-%m"))
+    """Median time to halfway by month of the regular season (Eastern dates) and for the postseason ("YYYY-post"), for
+    every big pitch and for big pitches in equally busy markets only, so a speed-up can be told apart from a market that
+    simply got busier."""
+    et = pd.to_datetime(big.t0, unit="us", utc=True).dt.tz_convert("America/New_York")
+    big = big.assign(month=np.where(big.game_type == "R", et.dt.strftime("%Y-%m"), et.dt.strftime("%Y") + "-post"))
     rows = []
     for mth, d in big.groupby("month"):
         if len(d) < 50:
             continue
         band = d[d.activity.between(*BAND)]
-        rows.append({"month": mth, "n": int(len(d)), "half_median": float(d.half_time.median()),
+        rows.append({"month": mth, "n": int(len(d)), "half_median": hq(d.half_time),
+                     "never_60s": float(d.half_time.isna().mean()),
                      "within_2s": float((d.half_time < 2).mean()), "activity": float(d.activity.median()),
-                     "band_n": int(len(band)), "band_half_median": float(band.half_time.median()) if len(band) >= 50
-                     else None})
+                     "band_n": int(len(band)), "band_half_median": hq(band.half_time) if len(band) >= 50 else None})
     return rows
 
 

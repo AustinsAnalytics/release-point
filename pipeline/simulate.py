@@ -34,6 +34,9 @@ def simulate_game(rng, n_pitches=280, maker_mean=2.0, noise_rate=1.0, snipe_rate
     jumps = np.diff(v)
     t_known = t_pitch + INFO
     t_reprice = t_known + rng.exponential(maker_mean, n_pitches)  # when makers move their quotes to the new value
+    # makers who reprice move straight to the latest state, which already contains every earlier pitch's news: so a
+    # pitch's value is in the quotes once its own repricing or any later one has happened
+    t_reprice = np.minimum.accumulate(t_reprice[::-1])[::-1]
     end = t_pitch[-1] + 120
 
     def belief(t):                                                # makers' midpoint
@@ -111,13 +114,17 @@ def run(n_games=400, seed=7):
 
     b_est, b_true = beta(est), beta(tru)
     halves, true_rep = np.array(halves), np.array(true_rep)
+    gap = np.abs(b_est - b_true)
+    # from when on the curve read off the trades stays within one percent of the move of the true one
+    close = [g for k, g in enumerate(GRID) if g >= 0 and np.all(gap[k:] < 0.01)]
     out = {
         "games": n_games, "big_events": int(len(halves)),
         "true_reprice_median": float(np.median(true_rep + 0)), "est_half_median": float(np.median(halves)),
         "half_minus_true_median": float(np.median(halves - true_rep)),
         "half_after_true_share": float(np.mean(halves >= true_rep - 1e-9)),
+        "half_before_true_n": int(np.sum(halves < true_rep - 1e-9)),
         "curve_grid": GRID.tolist(), "beta_est": b_est.round(4).tolist(), "beta_true": b_true.round(4).tolist(),
-        "curve_max_gap": float(np.nanmax(np.abs(b_est - b_true))),
+        "curve_max_gap": float(np.nanmax(gap)), "curve_within_1pct_from": float(close[0]) if close else None,
         "markout_est": float(np.sum(mk_est)), "markout_true": float(np.sum(mk_true)),
         "markout_ratio": float(np.sum(mk_est) / np.sum(mk_true)),
     }

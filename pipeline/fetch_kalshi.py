@@ -72,11 +72,12 @@ def trades(season, workers=10, rate=10.0):
 
     def one(m):
         start = scheduled_start(m["event_ticker"])
-        if start:                                  # from 45 minutes before the scheduled first pitch
-            lo = int((start - timedelta(minutes=45)).timestamp())
+        close = datetime.fromisoformat(m["close_time"].replace("Z", "+00:00"))
+        if start:                                  # from 45 minutes before the scheduled first pitch, or before five
+            # hours ahead of the close if that is earlier: a game moved earlier than its ticker's time is still covered
+            lo = int((min(start, close - timedelta(hours=5)) - timedelta(minutes=45)).timestamp())
         else:                                      # 2025 markets opened the morning of the game: take all of it
             lo = int(datetime.fromisoformat(m["open_time"].replace("Z", "+00:00")).timestamp())
-        close = datetime.fromisoformat(m["close_time"].replace("Z", "+00:00"))
         hi = int((close + timedelta(minutes=10)).timestamp())
         historical = m["source"] == "historical"
         path = "/historical/trades" if historical else "/markets/trades"

@@ -4,13 +4,18 @@ A taker who buys pays the ask; a taker who sells hits the bid. So the latest buy
 sell a lower one, and their average is the midpoint. Fills that share a timestamp and direction are one taker order
 sweeping the book; the order's last fill (highest for a buy, lowest for a sell) is the quote it left behind.
 
-All prices are in cents of home-team win probability. Times are integer microseconds.
+All prices are in cents of home-team win probability. Times are integer microseconds. Nothing here looks ahead: the
+midpoint at a moment uses only prints up to it, and so does the typical spread used to judge whether a book is
+consistent.
 """
 from dataclasses import dataclass
 
 import numpy as np
+import pandas as pd
 
 STALE_US = 10_000_000          # if one side's last print is this much older than the other's, trust the newer side
+SPREAD_OBS = 200               # the typical spread is the median of the last 200 two-sided observations...
+SPREAD_DEFAULT = 1.0           # ...and one cent before there are any
 
 
 @dataclass
@@ -20,7 +25,8 @@ class Tape:
     sell_t: np.ndarray         # taker-sell orders
     sell_px: np.ndarray
     order_t: np.ndarray        # every order (either side), for activity checks
-    spread: float              # typical quoted spread in cents (median of ask - bid when both are fresh)
+    spread_t: np.ndarray       # times of two-sided observations of the spread...
+    spread_v: np.ndarray       # ...and the typical spread in cents up to each one (running median, 1 to 5 cents)
 
 
 def orders(ts, px, direction, contracts):
@@ -45,17 +51,27 @@ def build_tape(ts, px, direction, contracts):
     t, d, last, _, _ = orders(ts, px, direction, contracts)
     buy, sell = d > 0, d < 0
     bt, bp, st, sp = t[buy], last[buy], t[sell], last[sell]
-    # typical spread: at each order, latest ask minus latest bid when both are under 5 seconds old and not crossed
+    # typical spread: at each order, latest ask minus latest bid when both are under 5 seconds old and not crossed;
+    # a running median of the recent observations, so a price at time q is judged with what was known by q
     ia = np.searchsorted(bt, t, side="right") - 1
     ib = np.searchsorted(st, t, side="right") - 1
     ok = (ia >= 0) & (ib >= 0)
-    gaps = []
+    obs_t, obs_v = np.array([], dtype=t.dtype), np.array([])
     if ok.any():
         a, b = bp[ia[ok]], sp[ib[ok]]
         fresh = (t[ok] - bt[ia[ok]] < 5_000_000) & (t[ok] - st[ib[ok]] < 5_000_000) & (a >= b)
-        gaps = (a - b)[fresh]
-    spread = float(np.clip(np.median(gaps), 1.0, 5.0)) if len(gaps) else 1.0
-    return Tape(bt, bp, st, sp, t, spread)
+        obs_t = t[ok][fresh]
+        obs_v = pd.Series((a - b)[fresh]).rolling(SPREAD_OBS, min_periods=1).median().clip(1.0, 5.0).to_numpy()
+    return Tape(bt, bp, st, sp, t, obs_t, obs_v)
+
+
+def spread_at(tape, q, strict=False):
+    """The typical spread (cents) as known at query times q: from observations up to q (before q if strict)."""
+    q = np.asarray(q)
+    i = np.searchsorted(tape.spread_t, q, side="left" if strict else "right") - 1
+    if not len(tape.spread_v):
+        return np.full(q.shape, SPREAD_DEFAULT)
+    return np.where(i >= 0, tape.spread_v[np.maximum(i, 0)], SPREAD_DEFAULT)
 
 
 def mid_at(tape, q, strict=False):
@@ -71,11 +87,12 @@ def mid_at(tape, q, strict=False):
     b = pick(tape.sell_px, ib, has_b, np.nan)
     ta = pick(tape.buy_t, ia, has_a, -1)
     tb = pick(tape.sell_t, ib, has_b, -1)
-    half = tape.spread / 2
+    spread = spread_at(tape, q, strict)
+    half = spread / 2
     # average the two sides only when they are consistent with one book: not crossed, no wider than the usual spread
     # plus a cent, and not far apart in time. Otherwise the older side is stale (the price has moved past it): use the
     # newer print and step half a spread toward the middle.
-    both = has_a & has_b & (a >= b) & (a - b <= tape.spread + 1) & (np.abs(ta - tb) <= STALE_US)
+    both = has_a & has_b & (a >= b) & (a - b <= spread + 1) & (np.abs(ta - tb) <= STALE_US)
     newer_is_buy = ta >= tb
     one_side = np.where(newer_is_buy, a - half, b + half)
     one_side = np.where(has_a & ~has_b, a - half, np.where(has_b & ~has_a, b + half, one_side))

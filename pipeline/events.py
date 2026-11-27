@@ -19,7 +19,7 @@ import pandas as pd
 import pyarrow.parquet as pq
 
 from common import DATA, OUT
-from tape import build_tape, last_order_age, mid_at, orders
+from tape import build_tape, last_order_age, mid_at, orders, spread_at
 
 GRID = np.array([-30, -20, -15, -10, -7.5, -5, -4, -3, -2, -1.5, -1, -0.5, 0, 0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2,
                  2.5, 3, 3.5, 4, 4.5, 5, 6, 7, 8, 9, 10, 12, 14, 16, 18, 20, 25, 30, 40, 50, 60, 90, 120])
@@ -111,7 +111,7 @@ def run(season):
         nxt = np.r_[t0[1:], np.nan]
         ev = pd.DataFrame({
             "game_pk": pk, "t0": t0, "feed_delay": (t1 - t0) / 1e6, "next_gap": (nxt - t0) / 1e6,
-            "p_ref": p_ref, "age": age, "F": F, "half_time": half, "spread": tape.spread,
+            "p_ref": p_ref, "age": age, "F": F, "half_time": half, "spread": spread_at(tape, t0 - REF_US, strict=True),
             "half_size": half_size, "half_aligned": half_aligned, "activity": activity,
             "game_order_median": float(np.median(osize)) if len(osize) else np.nan,
             "we_before": gp.we_before.to_numpy(), "we_after": gp.we_after.to_numpy(),
@@ -159,8 +159,11 @@ def run(season):
             "orders_until": np.histogram(until_o, PULSE_EDGES)[0],
             "contracts_until": np.histogram(until_o, PULSE_EDGES, weights=osize[mid_game])[0],
             "exposure": exposure(gaps, PULSE_EDGES)}))
-        # ...and around big pitches only: every order from ten seconds before to twenty after each one
-        bigs = t0[np.isfinite(F) & (np.abs(F) >= 4) & (age <= 60)]
+        # ...and around big pitches only (the same pitches the analysis uses: an active market, a price between 2 and
+        # 98 cents, a clean state, not the game's last pitch): every order from ten seconds before to twenty after
+        use = (np.isfinite(F) & (np.abs(F) >= 4) & (age <= 60) & (p_ref >= 2) & (p_ref <= 98)
+               & gp.clean.to_numpy(bool) & ~gp.last_pitch.to_numpy(bool))
+        bigs = t0[use]
         rel = [(ot[np.searchsorted(ot, b - 10_000_000):np.searchsorted(ot, b + 20_000_000)] - b) / 1e6 for b in bigs]
         rel = np.concatenate(rel) if len(rel) else np.array([])
         big_rows.append(pd.DataFrame({"game_pk": pk, "lo": BIG_EDGES[:-1], "orders": np.histogram(rel, BIG_EDGES)[0],

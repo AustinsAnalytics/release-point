@@ -3,7 +3,8 @@
     python pipeline/export.py
 
 Reads data/out/results.json (analysis.py), data/out/simulation.json (simulate.py), the event tables, and, for the
-opening figure, every trade around one pitch: the home run of the season that the market repriced the most.
+opening figure, every trade around one pitch: a big home run in a clean stretch of trading, from the postseason if one
+qualifies (see hero()).
 """
 import gzip
 import json
@@ -20,17 +21,22 @@ SITE = ROOT / "site"
 
 
 def season_meta(season):
+    """Trades made during the games (from first pitch until the market closed, right after the final out), the games
+    they cover, and every trade kept for the analysis (from 45 minutes before first pitch)."""
+    folder = DATA / "interim" / str(season)
     con = duckdb.connect()
-    t = con.execute(f"""select count(*), sum(contracts), count(distinct game_pk)
-                        from '{DATA / "interim" / str(season) / "trades.parquet"}'""").fetchone()
-    g = pd.read_parquet(DATA / "interim" / str(season) / "games.parquet")
-    p = pd.read_parquet(DATA / "interim" / str(season) / "pitches.parquet", columns=["game_pk"])
-    return {"trades": int(t[0]), "contracts": float(t[1]), "games_traded": int(t[2]), "games": int(len(g)),
-            "pitches": int(len(p))}
+    t = con.execute(f"""select count(*), sum(contracts), count(distinct t.game_pk),
+                               count(*) filter (where t.ts >= g.first_pitch_utc),
+                               sum(contracts) filter (where t.ts >= g.first_pitch_utc)
+                        from '{folder / "trades.parquet"}' t join '{folder / "games.parquet"}' g using (game_pk)""").fetchone()
+    g = pd.read_parquet(folder / "games.parquet")
+    return {"trades_window": int(t[0]), "contracts_window": float(t[1]), "games_traded": int(t[2]),
+            "trades": int(t[3]), "contracts": float(t[4]), "games": int(len(g))}
 
 
 def hero(season=2026):
-    """The home run the market moved on most, with every fill from 8 seconds before to 30 seconds after."""
+    """One big home run with every fill from 8 seconds before to 30 seconds after: the biggest fair move among home runs
+    with a clear picture, postseason games first."""
     ev = pd.read_parquet(OUT / str(season) / "events.parquet")
     # a clear picture: a big move that stays inside 15-85 cents, a market that traded in the five seconds before, a
     # steady price before the pitch and after the dust settles; postseason games first, then the biggest move
@@ -67,6 +73,8 @@ def hero(season=2026):
             "batting_team": g.home if batting_home else g.away,
             "description": play["result"]["description"],
             "F": float(e.F if batting_home else -e.F), "p_ref": float(flip(e.p_ref)),
+            # where the market itself settled: its median price from 20 to 30 seconds after the pitch
+            "p_after": float(np.nanmedian(flip(mid[(grid >= 20) & (grid <= 30)]))),
             "half_time": float(e.half_time), "feed_delay": float(e.feed_delay),
             "trades": [[round((t - e.t0) / 1e6, 3), round(float(flip(c)), 2), int(d if batting_home else -d),
                         round(float(s), 2)] for t, c, d, s in win.itertuples(index=False)],
@@ -85,10 +93,11 @@ def main():
             continue
         sp = r["speed"]
         out["seasons"][str(s)] = {
-            "meta": {**season_meta(s), "usable": r["usable"], "big": r["big"]},
+            "meta": {**season_meta(s), "pitches": r["pitches"], "usable": r["usable"], "big": r["big"]},
             "beta_all": sp["beta_all"], "beta_big": sp["beta_big"], "half_hist": sp["half_time"]["hist"],
+            "half_n_all": sp["half_time"]["n_all"],
             "kinds": [{"kind": k, **{x: v[x] for x in ("n", "median_F", "half_median", "half_q25", "half_q75",
-                                                       "feed_median", "ahead_of_feed", "beta60")}}
+                                                       "never_60s", "feed_median", "ahead_of_feed", "beta60")}}
                       for k, v in sp["by_kind"].items()],
             "markouts": r["speed_tax"]["curve"], "pulse": r["pulse"], "pulse_big": r["pulse_big"],
             "calibration": r["accuracy"]["calibration"],
