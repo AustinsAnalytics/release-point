@@ -1,7 +1,7 @@
 """Reading quotes off the tape: order grouping, the trade-implied midpoint, and no look-ahead."""
 import numpy as np
 
-from tape import build_tape, mid_at, orders
+from tape import build_tape, mid_at, orders, spread_at
 
 S = 1_000_000  # one second in microseconds
 
@@ -21,7 +21,7 @@ def test_fills_at_one_instant_are_one_order():
 def test_midpoint_averages_a_consistent_book():
     tape = build_tape(np.array([1, 2, 3, 4]) * S, np.array([51, 50, 51, 50.0]), np.array([1, -1, 1, -1]),
                       np.ones(4))
-    assert tape.spread == 1.0
+    assert spread_at(tape, np.array([5 * S]))[0] == 1.0
     assert mid_at(tape, np.array([5 * S]))[0] == 50.5
 
 
@@ -31,8 +31,8 @@ def test_a_stale_side_is_ignored_after_the_price_moves():
     px = np.array([51, 50, 51, 50, 58, 59.0])
     d = np.array([1, -1, 1, -1, 1, 1])
     tape = build_tape(ts.astype(np.int64), px, d, np.ones(6))
-    m = mid_at(tape, np.array([21 * S]))[0]
-    assert m == 59 - tape.spread / 2
+    q = np.array([21 * S])
+    assert mid_at(tape, q)[0] == 59 - spread_at(tape, q)[0] / 2
 
 
 def test_crossed_prints_use_the_newer_side():
@@ -40,7 +40,8 @@ def test_crossed_prints_use_the_newer_side():
     px = np.array([51, 50, 51, 50, 45.0])          # a sell at 45 after a buy at 51: the old offer is gone
     d = np.array([1, -1, 1, -1, -1])
     tape = build_tape(ts, px, d, np.ones(5))
-    assert mid_at(tape, np.array([11 * S]))[0] == 45 + tape.spread / 2
+    q = np.array([11 * S])
+    assert mid_at(tape, q)[0] == 45 + spread_at(tape, q)[0] / 2
 
 
 def test_strict_reference_never_sees_the_print_at_the_reference_time():
@@ -49,6 +50,17 @@ def test_strict_reference_never_sees_the_print_at_the_reference_time():
     q = np.array([3 * S])
     assert mid_at(tape, q, strict=True)[0] == 50.5     # the 70 print at exactly t=3 s is excluded
     assert mid_at(tape, q, strict=False)[0] != 50.5
+
+
+def test_the_typical_spread_uses_only_the_past():
+    # a tight 50/51 book early on, a 4-cent book later: the early midpoint is judged with the early spread only
+    ts = np.array([1, 2, 3, 4, 100, 101, 102, 103]) * S
+    px = np.array([51, 50, 51, 50, 54, 50, 54, 50.0])
+    d = np.array([1, -1, 1, -1, 1, -1, 1, -1])
+    tape = build_tape(ts, px, d, np.ones(8))
+    assert spread_at(tape, np.array([5 * S]))[0] == 1.0
+    assert spread_at(tape, np.array([104 * S]))[0] > 1.0
+    assert mid_at(tape, np.array([5 * S]))[0] == 50.5
 
 
 def test_no_prints_yet_is_nan():

@@ -6,8 +6,10 @@ from simulate import run
 R = run(n_games=60, seed=3)
 
 
-def test_half_adjustment_time_never_beats_the_true_repricing():
-    assert R["half_after_true_share"] == 1.0           # a trade-based measure can only see a move after it happens
+def test_half_adjustment_time_almost_never_beats_the_true_repricing():
+    # a trade can only show a move after the quotes make it. The rare exception: the previous pitch's news reaches the
+    # quotes after this pitch, and the price moves past halfway on that news first
+    assert R["half_after_true_share"] >= 0.995
 
 
 def test_half_adjustment_time_lags_the_truth_by_well_under_a_second():

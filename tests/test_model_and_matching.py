@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 import numpy as np
 import pandas as pd
 
-from build_trades import split_teams
+from build_trades import pick_games, split_teams
 from events import classify, exposure, fair_move
 from fetch_kalshi import scheduled_start
 
@@ -50,3 +50,28 @@ def test_kalshi_event_codes():
     assert split_teams("TBBOS", {"TB", "BOS", "MIL"}) == ("TB", "BOS")
     assert split_teams("NYYNYM", {"NYY", "NYM"}) == ("NYY", "NYM")
     assert scheduled_start("KXMLBGAME-26OCT282000MILTB") == datetime(2026, 10, 29, 0, 0, tzinfo=timezone.utc)
+
+
+H = 3600 * 1_000_000
+
+
+def test_markets_find_their_games_by_close_time_even_when_the_game_moved():
+    """A doubleheader is told apart by when each market closed; a postponed game keeps its original ticker date and is
+    still found; a market that closed nowhere near a game's end is left unmatched."""
+    from datetime import date
+    games = pd.DataFrame({
+        "game_pk": [1, 2, 3, 4], "et_date": [date(2026, 7, 4), date(2026, 7, 4), date(2026, 7, 6), date(2026, 7, 7)],
+        "away": ["TB"] * 4, "home": ["BOS"] * 4, "home_win": [True, False, True, False],
+        "last_event_utc": [100 * H, 106 * H, 150 * H, 175 * H]})
+    mk = pd.DataFrame({
+        "ticker": ["DH1-BOS", "DH2-BOS", "PPD-BOS", "LOST-BOS", "NEXT-BOS"],
+        "et_date": [date(2026, 7, 4), date(2026, 7, 4), date(2026, 7, 5), date(2026, 7, 9), date(2026, 7, 7)],
+        "away_k": ["TB"] * 5, "home_k": ["BOS"] * 5, "team_k": ["BOS"] * 5,
+        "close_us": [100 * H + 120e6, 106 * H + 90e6, 150 * H + 60e6, 230 * H, 175 * H + 100e6],
+        "result": ["yes", "no", "yes", "no", "no"]})
+    out = pick_games(mk, games).set_index("ticker")
+    assert out.loc["DH1-BOS", "game_pk"] == 1 and out.loc["DH2-BOS", "game_pk"] == 2
+    assert out.loc["PPD-BOS", "game_pk"] == 3                  # ticker says July 5; played July 6
+    assert out.loc["NEXT-BOS", "game_pk"] == 4
+    assert "LOST-BOS" not in out.index
+    assert out.settles_right.all()
