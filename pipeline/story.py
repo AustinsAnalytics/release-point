@@ -44,14 +44,15 @@ def drift_text(acc, med_F, cost_c):
     return long, short
 
 
-def outcome_text(acc):
+def outcome_text(acc, med_F, cost_c):
     b, se = acc["outcome_big"]["slope"], acc["outcome_big"]["se"]
     head = ("And the final result shows nothing the price at thirty seconds had missed: regressing the result on the "
             "fair move, which everyone knew at the time, gives a slope of ")
     if abs(b) > 2 * se:
-        return (f"Regressing the final result on the fair move, which everyone knew at the time, gives a slope of "
-                f"{signed(b, 3)} (standard error {se:.3f}, clustered by game): the price at thirty seconds had "
-                f"{'not yet absorbed all' if b > 0 else 'overshot'} of it.")
+        return (f"The final result says the same: regressed on the fair move, which everyone knew at the time, it "
+                f"gives a slope of {signed(b, 3)} (standard error {se:.3f}, clustered by game), so the price at thirty "
+                f"seconds had {'not yet absorbed' if b > 0 else 'overshot'} about {pct(abs(b))} of the move: "
+                f"{abs(b) * med_F:.2f}&cent; on a typical big pitch, again less than the cost of a trade.")
     return f"{head}{signed(b, 3)} (standard error {se:.3f}, clustered by game), zero within the noise."
 
 
@@ -103,29 +104,50 @@ def kinds_sentence(k):
     return " ".join(parts)
 
 
+def month_name(m):
+    return date.fromisoformat(m + "-01").strftime("%B")
+
+
 def seasons_paragraph(r25, r26, m25, m26, first_day):
+    """Two paragraphs on how the market changed, worded from the direction of each comparison."""
     tpg25, tpg26 = m25["trades"] / m25["games_traded"], m26["trades"] / m26["games_traded"]
     h25, h26 = r25["speed"]["half_time"]["median"], r26["speed"]["half_time"]["median"]
-    t25, t26 = r25["speed"]["t50"]["est"], r26["speed"]["t50"]["est"]
+    a25, a26 = r25["speed"]["ahead_of_feed"]["est"], r26["speed"]["ahead_of_feed"]["est"]
+    c25, c26 = r25["speed_tax"]["rest_maker_c"], r26["speed_tax"]["rest_maker_c"]
     g25, g26 = r25["speed_tax"]["given_back"], r26["speed_tax"]["given_back"]
-    busier = "busier" if tpg26 > tpg25 else "quieter"
-    out = [f"These markets are young: Kalshi&rsquo;s archive of MLB game markets begins on {nice_date(first_day)}. "
-           f"In their second season they were {busier}, {tpg26:,.0f} trades a game against {tpg25:,.0f}."]
-    if h26 < h25 and t26 < t25:
-        out.append(f"They were also faster: the median time from a big pitch to the first trade past halfway fell from "
-                   f"{s1(h25)} seconds in 2025 to {s1(h26)} in 2026, and the trading price reached halfway in "
-                   f"{s1(t26)} seconds against {s1(t25)} (Fig. 8).")
-    elif h26 > h25 and t26 > t25:
-        out.append(f"They were not faster: the median time from a big pitch to the first trade past halfway was "
-                   f"{s1(h25)} seconds in 2025 and {s1(h26)} in 2026, and the trading price reached halfway in "
-                   f"{s1(t25)} and {s1(t26)} seconds (Fig. 8).")
+    p1 = (f"These markets are young: Kalshi&rsquo;s archive of MLB game markets begins on {nice_date(first_day)}. In "
+          f"that first season a game drew about {tpg25:,.0f} trades; in 2026, about {tpg26:,.0f}. ")
+    if h26 < h25:
+        p1 += (f"Along with the volume came speed. The median time from a big pitch to the first trade past halfway fell "
+               f"from {s1(h25)} seconds in 2025 to {s1(h26)} in 2026, and the share of big pitches priced before MLB&rsquo;s "
+               f"feed had the result rose from {pct(a25)} to {pct(a26)} (Fig. 8).")
     else:
-        out.append(f"Speed changed little: the median time from a big pitch to the first trade past halfway was "
-                   f"{s1(h25)} seconds in 2025 and {s1(h26)} in 2026, and the trading price reached halfway in "
-                   f"{s1(t25)} and {s1(t26)} seconds (Fig. 8).")
-    out.append(f"Makers handed back {pct(g25)} of their ordinary trading profit in the five seconds after big pitches "
-               f"in 2025, and {pct(g26)} in 2026.")
-    return " ".join(out)
+        p1 += (f"The speed did not follow: the median time from a big pitch to the first trade past halfway was "
+               f"{s1(h25)} seconds in 2025 and {s1(h26)} in 2026 (Fig. 8).")
+    mo = r26["monthly"]
+    reg = [m for m in mo if not m["month"].endswith(("-10", "-11"))]
+    post = [m for m in mo if m["month"].endswith(("-10", "-11"))]
+    first, last = reg[0], reg[-1]
+    p2 = ""
+    if last["half_median"] < first["half_median"]:
+        p2 = (f"Within 2026 it kept getting faster: from {s1(first['half_median'])} seconds in {month_name(first['month'])} "
+              f"to {s1(last['half_median'])} in {month_name(last['month'])}"
+              + (f", and {s1(post[0]['half_median'])} in the October postseason" if post else "") + ". ")
+        band = [m for m in reg if m["band_half_median"] is not None]
+        if len(band) >= 2 and band[-1]["band_half_median"] < band[0]["band_half_median"]:
+            p2 += (f"That is not only because the markets got busier: in markets that were equally busy before the pitch "
+                   f"(one to two orders a second), it fell from {s1(band[0]['band_half_median'])} seconds in "
+                   f"{month_name(band[0]['month'])} to {s1(band[-1]['band_half_median'])} in "
+                   f"{month_name(band[-1]['month'])} (Fig. 9). ")
+    if c26 < c25 and g26 > g25:
+        p2 += (f"Market makers felt it. On ordinary trades they earned {c25:.2f}&cent; a contract in 2025 and "
+               f"{c26:.2f}&cent; in 2026, and the share of that profit they handed to faster traders after news rose "
+               f"from {pct(g25)} to {pct(g26)}, consistent with a more competitive market that leaves less room for a slow "
+               f"quote.")
+    else:
+        p2 += (f"On ordinary trades makers earned {c25:.2f}&cent; a contract in 2025 and {c26:.2f}&cent; in 2026, and "
+               f"handed {pct(g25)} and {pct(g26)} of that profit to faster traders after news.")
+    return p1 + "</p>\n    <p>" + p2.strip()
 
 
 def build():
@@ -156,11 +178,11 @@ def build():
              "W": " in the World Series"}[h["game_type"]]
     pulse = r26["pulse"]
     lo = pulse["lo"]
-    after = [(lo[i] + 0.25, v) for i, v in enumerate(pulse["since"]) if lo[i] < 10]
-    peak_t, peak = max(after, key=lambda x: x[1])
     def sim_pct(x):
         return f"{100 * abs(x - 1):.1f}%"
 
+    reg_months = [m for m in r26["monthly"] if not m["month"].endswith(("-10", "-11"))]
+    band_months = [m for m in reg_months if m["band_half_median"] is not None]
     who = r26["who"]
     act = who["by_activity"]
     post_sentence = ""
@@ -180,7 +202,12 @@ def build():
 
     v = {
         "loss_15": pct(tax["loss_by"]["1.5"]), "loss_3": pct(tax["loss_by"]["3"]),
-        "drift_sentence": drift_long, "drift_short": drift_short, "outcome_sentence": outcome_text(acc),
+        "speedup": f"{r25['speed']['half_time']['median'] / sp['half_time']['median']:.1f}".rstrip("0").rstrip(".")
+        if r25 else "", "h25": s1(r25["speed"]["half_time"]["median"]) if r25 else "",
+        "a25": pct(r25["speed"]["ahead_of_feed"]["est"]) if r25 else "",
+        "mar_half": s1(reg_months[0]["half_median"]), "sep_half": s1(reg_months[-1]["half_median"]),
+        "band_first": s1(band_months[0]["band_half_median"]), "band_last": s1(band_months[-1]["band_half_median"]),
+        "drift_sentence": drift_long, "drift_short": drift_short, "outcome_sentence": outcome_text(acc, float(big_F.abs().median()), float(cost)),
         "cal_sentence": calibration_text(acc["calibration"]),
         "beta60_word": ("slightly more" if acc["beta60_big"]["lo"] > 1 else "slightly less" if acc["beta60_big"]["hi"] < 1
                         else "not different from one"),
@@ -212,7 +239,7 @@ def build():
         "beta60_hi": f"{acc['beta60_big']['hi']:.2f}",
         "given_back": pct(tax["given_back"]), "gb_lo": pct(tax["given_back_ci"][0]), "gb_hi": pct(tax["given_back_ci"][1]),
         "gb_dollars": f"{-tax['after_news_dollars_per_game']:,.0f}",
-        "beta_m5": pct(abs(sp["beta_at"]["-5"]["est"]), 1),
+        "beta_m5": pct(abs(sp["beta_at"]["-5"]["est"]), 2),
         "t50": s1(sp["t50"]["est"]), "t50_lo": s1(sp["t50"]["lo"]), "t50_hi": s1(sp["t50"]["hi"]),
         "t50_raw": f"{sp['t50']['est']:.3f}", "t90": s1(sp["t90"]["est"]), "t90_raw": f"{sp['t90']['est']:.3f}",
         "within1": pct(sp["half_time"]["within_1s"]), "within2": pct(sp["half_time"]["within_2s"]),
@@ -229,7 +256,8 @@ def build():
         "snipe_share": pct(tax["snipe_share_contracts"], 1), "snipe_c": f"{tax['snipe_taker_c']:.2f}",
         "snipe_fee_c": f"{tax['snipe_taker_fee_c']:.2f}",
         "pulse_before": f"{pulse['until'][0]:.2f}", "pulse_base": f"{pulse['baseline']:.2f}",
-        "pulse_peak": f"{peak:.2f}", "pulse_peak_t": f"{peak_t:.1f}",
+        "big_before": f"{r26['pulse_big']['before']:.1f}", "big_peak": f"{r26['pulse_big']['peak']:.1f}",
+        "big_peak_t": s1(r26["pulse_big"]["peak_t"]), "big_n": f"{r26['pulse_big']['n_big']:,}",
         "seasons_paragraph": seasons_paragraph(r25, r26, m25, m26, first_day) if r25 else "",
         "placebo": pct(r26["placebo"]["est"], 2), "placebo_lo": pct(r26["placebo"]["lo"], 2),
         "placebo_hi": pct(r26["placebo"]["hi"], 2),

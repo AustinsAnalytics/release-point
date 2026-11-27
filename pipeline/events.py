@@ -28,6 +28,7 @@ HORIZONS = (5, 30, 60)                  # markout horizons, seconds
 SINCE_BINS = np.array([0, 0.5, 1, 1.5, 2, 3, 4, 5, 6, 8, 10, 12, 15, 20, 30, 60, np.inf])
 NEWS_BINS = np.array([0, 0.5, 2, 5, np.inf])     # |F| classes, probability points
 PULSE_EDGES = np.arange(0, 60.5, 0.5)
+BIG_EDGES = np.arange(-10, 20.25, 0.25)                # around big pitches: quarter-second bins
 TAKER_FEE, MAKER_FEE = 0.035, 0.00875   # Kalshi quadratic fees for this series (0.07 and 0.0175 at a 0.5 multiplier)
 
 
@@ -75,7 +76,7 @@ def run(season):
     out = OUT / str(season)
     out.mkdir(parents=True, exist_ok=True)
 
-    ev_rows, mk_rows, pulse_rows = [], [], []
+    ev_rows, mk_rows, pulse_rows, big_rows = [], [], [], []
     for n, (pk, gp) in enumerate(ps.groupby("game_pk", sort=True)):
         if pk not in tgroups:
             continue
@@ -158,6 +159,12 @@ def run(season):
             "orders_until": np.histogram(until_o, PULSE_EDGES)[0],
             "contracts_until": np.histogram(until_o, PULSE_EDGES, weights=osize[mid_game])[0],
             "exposure": exposure(gaps, PULSE_EDGES)}))
+        # ...and around big pitches only: every order from ten seconds before to twenty after each one
+        bigs = t0[np.isfinite(F) & (np.abs(F) >= 4) & (age <= 60)]
+        rel = [(ot[np.searchsorted(ot, b - 10_000_000):np.searchsorted(ot, b + 20_000_000)] - b) / 1e6 for b in bigs]
+        rel = np.concatenate(rel) if len(rel) else np.array([])
+        big_rows.append(pd.DataFrame({"game_pk": pk, "lo": BIG_EDGES[:-1], "orders": np.histogram(rel, BIG_EDGES)[0],
+                                      "n_big": len(bigs)}))
         if (n + 1) % 250 == 0:
             print(f"  {n + 1} games", flush=True)
 
@@ -165,6 +172,7 @@ def run(season):
     events.to_parquet(out / "events.parquet", index=False)
     pd.concat(mk_rows, ignore_index=True).to_parquet(out / "markouts.parquet", index=False)
     pd.concat(pulse_rows, ignore_index=True).to_parquet(out / "pulse.parquet", index=False)
+    pd.concat(big_rows, ignore_index=True).to_parquet(out / "pulse_big.parquet", index=False)
     print(f"{season}: {len(events):,} pitches in {events.game_pk.nunique()} games", flush=True)
 
 

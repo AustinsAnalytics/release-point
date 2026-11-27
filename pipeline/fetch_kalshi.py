@@ -68,6 +68,7 @@ def trades(season, workers=10, rate=10.0):
     todo = [m for m in ms if not (folder / f"{m['ticker']}.jsonl.gz").exists()]
     print(f"{season} trades: {len(ms)} markets, {len(todo)} to fetch", flush=True)
     limiter = RateLimiter(rate)
+    live_limiter = RateLimiter(3.0)                # the live endpoint (unsettled-archive markets) throttles harder
 
     def one(m):
         start = scheduled_start(m["event_ticker"])
@@ -77,11 +78,12 @@ def trades(season, workers=10, rate=10.0):
             lo = int(datetime.fromisoformat(m["open_time"].replace("Z", "+00:00")).timestamp())
         close = datetime.fromisoformat(m["close_time"].replace("Z", "+00:00"))
         hi = int((close + timedelta(minutes=10)).timestamp())
-        path = "/historical/trades" if m["source"] == "historical" else "/markets/trades"
+        historical = m["source"] == "historical"
+        path = "/historical/trades" if historical else "/markets/trades"
         rows, cursor = [], ""
         while True:
             d = get_json(f"{API}{path}?ticker={m['ticker']}&min_ts={lo}&max_ts={hi}&limit=1000"
-                         + (f"&cursor={cursor}" if cursor else ""), limiter)
+                         + (f"&cursor={cursor}" if cursor else ""), limiter if historical else live_limiter)
             for t in d.get("trades", []):
                 rows.append([t["created_time"], t["yes_price_dollars"], t["count_fp"], t["taker_side"],
                              bool(t.get("is_block_trade"))])
@@ -92,12 +94,19 @@ def trades(season, workers=10, rate=10.0):
         write_atomic(folder / f"{m['ticker']}.jsonl.gz", gzip.compress(body, 6))
         return len(rows)
 
-    total = 0
+    total, failed = 0, []
     with ThreadPoolExecutor(workers) as pool:
-        for i, f in enumerate(as_completed([pool.submit(one, m) for m in todo]), 1):
-            total += f.result()
+        futures = {pool.submit(one, m): m["ticker"] for m in todo}
+        for i, f in enumerate(as_completed(futures), 1):
+            try:
+                total += f.result()
+            except Exception as e:                 # one market failing should not stop the rest; re-running fills it
+                failed.append(futures[f])
+                print(f"  FAILED {futures[f]}: {e}", flush=True)
             if i % 100 == 0 or i == len(todo):
                 print(f"  {i}/{len(todo)} markets, {total:,} trades", flush=True)
+    if failed:
+        print(f"{season}: {len(failed)} markets failed; run again to fetch them", flush=True)
 
 
 if __name__ == "__main__":

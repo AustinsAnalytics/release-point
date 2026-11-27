@@ -90,7 +90,8 @@ def main():
             "kinds": [{"kind": k, **{x: v[x] for x in ("n", "median_F", "half_median", "half_q25", "half_q75",
                                                        "feed_median", "ahead_of_feed", "beta60")}}
                       for k, v in sp["by_kind"].items()],
-            "markouts": r["speed_tax"]["curve"], "pulse": r["pulse"], "calibration": r["accuracy"]["calibration"],
+            "markouts": r["speed_tax"]["curve"], "pulse": r["pulse"], "pulse_big": r["pulse_big"],
+            "calibration": r["accuracy"]["calibration"],
             "monthly": r["monthly"]}
     out["hero"] = hero()
     (SITE / "data").mkdir(parents=True, exist_ok=True)

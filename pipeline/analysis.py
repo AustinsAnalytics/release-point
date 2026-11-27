@@ -241,15 +241,33 @@ def placebo(ev):
     return {"est": est, "lo": float(np.percentile(b, 2.5)), "hi": float(np.percentile(b, 97.5))}
 
 
+BAND = (1.0, 2.0)          # orders a second in the five minutes before a pitch: "equally busy" across months
+
+
 def monthly(ev, big):
+    """Median time to halfway by month, for every big pitch and for big pitches in equally busy markets only, so a
+    speed-up can be told apart from a market that simply got busier."""
     big = big.assign(month=pd.to_datetime(big.t0, unit="us", utc=True).dt.strftime("%Y-%m"))
     rows = []
     for mth, d in big.groupby("month"):
         if len(d) < 50:
             continue
+        band = d[d.activity.between(*BAND)]
         rows.append({"month": mth, "n": int(len(d)), "half_median": float(d.half_time.median()),
-                     "within_2s": float((d.half_time < 2).mean())})
+                     "within_2s": float((d.half_time < 2).mean()), "activity": float(d.activity.median()),
+                     "band_n": int(len(band)), "band_half_median": float(band.half_time.median()) if len(band) >= 50
+                     else None})
     return rows
+
+
+def pulse_big(pb):
+    s = pb.groupby("lo").orders.sum()
+    n = pb.drop_duplicates("game_pk").n_big.sum()
+    rate = s / (n * 0.25)                     # orders per second around one big pitch
+    before = rate[(rate.index >= -10) & (rate.index < -5)].mean()
+    return {"lo": rate.index.tolist(), "rate": rate.round(4).tolist(), "n_big": int(n), "before": float(before),
+            "peak": float(rate[rate.index >= 0].max()), "peak_t": float(rate[rate.index >= 0].idxmax() + 0.125),
+            "last_before": float(rate[(rate.index >= -1) & (rate.index < 0)].mean())}
 
 
 def clean(o):
@@ -279,6 +297,7 @@ def main():
             "speed": speed(ev, big), "accuracy": accuracy(ev, big),
             "speed_tax": speed_tax(mk, ev_raw.game_pk.nunique()),
             "pulse": pulse(pd.read_parquet(OUT / str(season) / "pulse.parquet")),
+            "pulse_big": pulse_big(pd.read_parquet(OUT / str(season) / "pulse_big.parquet")),
             "placebo": placebo(ev), "monthly": monthly(ev, big), "who": who_and_when(big)}
         print(f"{season}: {res[str(season)]['games']} games, {len(ev):,} usable pitches, {len(big):,} big", flush=True)
     (OUT / "results.json").write_text(json.dumps(clean(res), indent=1, allow_nan=False))
