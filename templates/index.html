@@ -1,0 +1,246 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Release Point</title>
+<meta name="description" content="How fast does a market price a pitch? {{trades26}} trades on 2026 MLB game markets, lined up against every pitch to the millisecond.">
+<meta property="og:title" content="Release Point: how fast does a market price a pitch?">
+<meta property="og:description" content="{{trades26}} trades on 2026 MLB game markets, lined up against every pitch to the millisecond.">
+<meta property="og:image" content="og.png">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%231d1a16'/%3E%3Cpath d='M5 21h7l3-11 3 16 3-9h6' fill='none' stroke='%23f4efe4' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600&family=Instrument+Sans:wght@400;500;600;700&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/style.css">
+<script>
+  try { const t = localStorage.getItem("rp-theme"); if (t) document.documentElement.dataset.theme = t; } catch (e) {}
+</script>
+</head>
+<body>
+<div class="bar">
+  <a class="mark" href="./" aria-label="Release Point">
+    <svg viewBox="0 0 34 18" aria-hidden="true"><path d="M1 13h9l3-9 3 13 3-8h14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    Release Point
+  </a>
+  <button class="theme" id="theme" type="button">Dark</button>
+</div>
+
+<header class="open">
+  <p class="kicker">Market microstructure, one pitch at a time</p>
+  <h1>How fast does a market price a pitch?</h1>
+  <p class="dek">Every trade on every MLB game market Kalshi listed in 2025 and 2026, lined up against the pitch that moved it, to the millisecond.</p>
+  <p class="byline">Austin Gentile &middot; Data through the 2026 World Series &middot; <a href="{{repo}}">Code and method</a></p>
+</header>
+
+<main>
+<figure class="plate">
+  <div class="plate-inner">
+    <div class="fig-head"><span class="fig-no">Fig. 1</span><span class="fig-title">{{hero_title}}</span>
+      <button class="replay" id="replay" type="button">Replay</button></div>
+    <div class="legend"><span><i class="dot" style="background:var(--blue)"></i>a trade where the taker bought {{hero_team}}</span><span><i class="dot" style="background:var(--red)"></i>a trade where the taker sold</span><span><i style="background:var(--ink)"></i>the price the market was trading at, in cents (= {{hero_team}}&rsquo;s chance to win)</span></div>
+    <div class="chart" id="fig-hero"></div>
+    <figcaption>{{hero_caption}}</figcaption>
+  </div>
+</figure>
+
+<div class="readings">
+  <div class="reading"><div class="v">{{half_med}}<small>s</small></div><div class="l">median time from a big pitch to the first trade more than halfway to its new price</div></div>
+  <div class="reading"><div class="v">{{ahead_feed}}</div><div class="l">of big pitches traded past halfway before MLB&rsquo;s own feed marked the result final</div></div>
+  <div class="reading"><div class="v">{{beta60_big}}&times;</div><div class="l">the market&rsquo;s move one minute after a big pitch, as a multiple of the fair move</div></div>
+  <div class="reading"><div class="v">{{given_back}}</div><div class="l">of market makers&rsquo; trading profit handed to faster traders in the five seconds after a pitch that moved the price two points or more</div></div>
+</div>
+
+<section id="lab">
+  <h2><span class="no">I</span>A market where you can see the value</h2>
+  <div class="prose">
+    <p>Most of what is known about how fast prices absorb news comes from stock markets, and a stock market is an awkward laboratory: nobody observes what a share is worth, so the speed and the accuracy of a price&rsquo;s reaction can only be judged against a model of it. A baseball game is a cleaner experiment. Its news arrives on a schedule, a pitch every twenty seconds or so. Each piece is public, MLB stamps it to the millisecond, and what it is worth can be worked out from the inning, the score, the bases, the outs and the count.</p>
+    <p>Kalshi, an exchange regulated by the CFTC, lists a market on every MLB game: a contract that pays $1 if a team wins. Its public archive keeps every trade, to the microsecond, with the price, the size and which side crossed the spread to make it. I downloaded all of them for the 2025 and 2026 seasons and lined each one up against MLB&rsquo;s record of the pitch that came before it.</p>
+    <dl class="facts">
+      <dt>Trades</dt><dd><span class="num">{{trades26}}</span> in {{games26}} games in 2026 ({{contracts26}} contracts), and <span class="num">{{trades25}}</span> in {{games25}} games in 2025</dd>
+      <dt>Pitches</dt><dd><span class="num">{{pitches26}}</span> in 2026, each with two times: when it was thrown and when MLB&rsquo;s feed marked its result final</dd>
+      <dt>Fair value</dt><dd>Baseball Savant&rsquo;s published win expectancy for an average team, shifted to agree with the market one second before each pitch</dd>
+      <dt>Costs</dt><dd>Kalshi&rsquo;s fee for this series: 3.5&cent; &times; <i>p</i>(1 &minus; <i>p</i>) per contract for the taker and 0.875&cent; &times; <i>p</i>(1 &minus; <i>p</i>) for the maker</dd>
+    </dl>
+    <p>For every pitch I measure three things. The <strong>fair move</strong>: how much the pitch should change the price, given where the market stood a second before it. The <strong>response</strong>: where the market actually traded at each instant over the next two minutes. And what every trade <strong>earned</strong>, judged one minute later.</p>
+  </div>
+</section>
+
+<section id="speed">
+  <h2><span class="no">II</span>Latency</h2>
+  <div class="prose">
+    <p>Nothing happens before the pitch. Five seconds before it, the price has absorbed {{beta_m5}} of the move the pitch is about to cause. Then it moves fast. The price the market trades at is halfway to its new level <span class="num">{{t50}}</span> seconds after the pitch (95% interval {{t50_lo}}&ndash;{{t50_hi}}) and 90% of the way there by <span class="num">{{t90}}</span>, before the next pitch, which comes a median {{gap_median}} seconds after the last.</p>
+  </div>
+</section>
+<figure class="plate">
+  <div class="plate-inner">
+    <div class="fig-head"><span class="fig-no">Fig. 2</span><span class="fig-title">The market&rsquo;s response to a pitch, as a share of the fair move</span></div>
+    <div class="chart" id="fig-response" data-t50="{{t50_raw}}" data-t90="{{t90_raw}}"></div>
+    <figcaption>Every 2026 pitch with an active market ({{usable26}} of them). The line is the slope of the market&rsquo;s price change on the fair move at each moment; the band is a 95% interval that resamples whole games.</figcaption>
+  </div>
+</figure>
+<section>
+  <div class="prose">
+    <p>That curve waits for trades on both sides of the market, so it is the patient measure. The impatient one is the first trade that goes more than halfway to the new price. On the {{big26}} big pitches of 2026, the ones that moved fair value by four points or more, it came a median <span class="num">{{half_med}}</span> seconds after the pitch: within one second {{within1}} of the time, within two seconds {{within2}}, within five {{within5}}.</p>
+  </div>
+</section>
+<figure class="plate">
+  <div class="plate-inner">
+    <div class="fig-head"><span class="fig-no">Fig. 3</span><span class="fig-title">Seconds from a big pitch to the first trade past halfway</span></div>
+    <div class="chart" id="fig-half" data-median="{{half_med_raw}}"></div>
+    <figcaption>2026 pitches that moved fair value by four points or more. Half-second bins; {{never60}} of these pitches never traded past halfway within a minute.</figcaption>
+  </div>
+</figure>
+<section>
+  <div class="prose">
+    <p>The order that gets there first is rarely a small one. It is a median of {{first_size}} contracts, {{first_ratio}} times the typical order in the same game, and {{first_aligned}} of the time it is trading in the direction of the news; {{first_1000}} are a thousand contracts or more. Busier markets get there sooner: when the five minutes before a big pitch were in the busiest third (about {{act_hi_rate}} orders a second), the first trade past halfway came in {{act_hi}} seconds, against {{act_lo}} in the quietest third ({{act_lo_rate}} a second).{{post_sentence}}</p>
+  </div>
+</section>
+<section>
+  <div class="prose">
+    <h3>Two clocks</h3>
+    <p>MLB&rsquo;s feed gives every pitch two times: when it was thrown, and when its result was final in the feed, a median {{feed_called}} seconds later for a called pitch and {{feed_inplay}} for a ball in play, while the fielders finish the play. A market trading off MLB&rsquo;s public feed could not move before the second clock. This one does: {{ahead_feed}} of big pitches traded past halfway before the feed had the result (95% interval {{ahead_lo}}&ndash;{{ahead_hi}}).</p>
+    <p>Fig. 4 splits the big pitches by what happened on them, fastest first. {{kinds_sentence}}</p>
+  </div>
+</section>
+<figure class="plate">
+  <div class="plate-inner">
+    <div class="fig-head"><span class="fig-no">Fig. 4</span><span class="fig-title">How fast each kind of big pitch is priced, against MLB&rsquo;s feed</span></div>
+    <div class="legend"><span><i class="dot" style="background:var(--blue)"></i>market: first trade past halfway (median; line spans the middle half)</span><span><i class="dot" style="background:var(--red)"></i>MLB feed: result marked final (median)</span></div>
+    <div class="chart" id="fig-kinds"></div>
+    <figcaption>2026 pitches that moved fair value by four points or more, by what happened on the pitch.</figcaption>
+  </div>
+</figure>
+<section>
+  <div class="prose">
+    <p class="aside">These are times to the first trade at the new price, so they include waiting for someone to trade. On a simulated market with the real tape&rsquo;s trading rates (section VII), that wait adds a median of {{sim_lag}} seconds: the quotes themselves move a little sooner still.</p>
+  </div>
+</section>
+
+<section id="accuracy">
+  <h2><span class="no">III</span>Amplitude</h2>
+  <div class="prose">
+    <p>Speed is worth nothing if the price lands in the wrong place. A minute after a big pitch the market has moved <span class="num">{{beta60_big}}</span> times the fair move (95% interval {{beta60_lo}}&ndash;{{beta60_hi}}): close to one, and {{beta60_word}}.</p>
+    <p>{{drift_sentence}} {{outcome_sentence}}</p>
+    <p>The level is right too. {{cal_sentence}} (Fig. 5), and the price beat the average-team model at forecasting the result, with a Brier score of {{brier_m}} against {{brier_a}}: it knows who is playing.</p>
+  </div>
+</section>
+<figure class="plate">
+  <div class="plate-inner">
+    <div class="fig-head"><span class="fig-no">Fig. 5</span><span class="fig-title">Price before the pitch against how often that team won</span></div>
+    <div class="chart" id="fig-cal" style="max-width:520px"></div>
+    <figcaption>2026 pitches in ten-cent bins. Bars are 95% intervals that resample whole games, since every pitch in a game shares one result.</figcaption>
+  </div>
+</figure>
+
+<section id="cost">
+  <h2><span class="no">IV</span>Who pays for speed</h2>
+  <div class="prose">
+    <p>Someone is on the other side of every fast trade. Kalshi runs an order book: a maker posts a price and waits; a taker crosses the spread and trades against it. If a maker&rsquo;s quote is still resting when a home run clears the fence, the fastest taker gets it at the old price.</p>
+    <p>Measured a minute later, makers earned {{maker_c}}&cent; per contract across 2026, before Kalshi&rsquo;s maker fee of about {{maker_fee_c}}&cent;. Where they earned it, and where they gave it back, depends almost entirely on the second in which the trade happened (Fig. 6). Trades in the five seconds after a pitch that moved fair value by two points or more were {{after_news_share}} of all contracts, and they cost makers {{after_news_c}}&cent; a contract. Every other trade earned makers {{rest_c}}&cent;. Netted over the season, makers handed {{given_back}} of their ordinary trading profit back in those five-second windows (95% interval {{gb_lo}}&ndash;{{gb_hi}}): about ${{gb_dollars}} a game, or ${{tax_total}} across 2026, against ${{rest_total}} earned on every other trade.</p>
+    <p>A resting quote is an option written for free to whoever sees the play first. Most of the time it expires harmlessly; after a pitch that moves the price it gets exercised, and quickly: {{loss_15}} of the makers&rsquo; loss in those windows comes within a second and a half of the pitch, {{loss_3}} within three seconds. The orders on the other side, takers trading in the direction of the news within five seconds of such a pitch, were {{snipe_share}} of contracts. They made {{snipe_c}}&cent; a contract, against a taker fee of about {{snipe_fee_c}}&cent;.</p>
+  </div>
+</section>
+<figure class="plate">
+  <div class="plate-inner">
+    <div class="fig-head"><span class="fig-no">Fig. 6</span><span class="fig-title">What a maker earned on a trade, by how soon after the pitch it happened</span></div>
+    <div class="legend"><span><i class="band" style="background:var(--blue)"></i>makers earned</span><span><i class="band" style="background:var(--red)"></i>makers lost</span></div>
+    <div class="chart" id="fig-markouts"></div>
+    <figcaption>Every 2026 fill, in cents per contract: the price one minute later against the trade price, from the maker&rsquo;s side, before fees.</figcaption>
+  </div>
+</figure>
+
+<section id="rhythm">
+  <h2><span class="no">V</span>Rhythm</h2>
+  <div class="prose">
+    <p>The pitch clock gives this market something a stock market sees a few times a year: news on a timetable. Makers know a pitch is coming roughly every twenty seconds, and the tape shows them waiting for it. Trading thins in the seconds before the pitch, to {{pulse_before}} orders a second per game in the last half second against {{pulse_base}} in the quiet middle of the interval, then jumps to {{pulse_peak}} a second {{pulse_peak_t}} seconds after it.</p>
+  </div>
+</section>
+<figure class="plate">
+  <div class="plate-inner">
+    <div class="fig-head"><span class="fig-no">Fig. 7</span><span class="fig-title">Orders per second around the pitch</span></div>
+    <div class="chart" id="fig-pulse"></div>
+    <figcaption>2026. Left of the pitch, time until it; right, time since it. Each half-second is divided by the time games actually spent there, so long breaks between innings do not inflate the edges.</figcaption>
+  </div>
+</figure>
+
+<section id="seasons">
+  <h2><span class="no">VI</span>A faster market</h2>
+  <div class="prose">
+    <p>{{seasons_paragraph}}</p>
+  </div>
+</section>
+<figure class="plate">
+  <div class="plate-inner">
+    <div class="fig-head"><span class="fig-no">Fig. 8</span><span class="fig-title">Response to a pitch, 2025 against 2026</span></div>
+    <div class="legend"><span><i style="background:var(--red)"></i>2025</span><span><i style="background:var(--blue)"></i>2026</span></div>
+    <div class="chart" id="fig-seasons"></div>
+  </div>
+</figure>
+<figure class="plate">
+  <div class="plate-inner">
+    <div class="fig-head"><span class="fig-no">Fig. 9</span><span class="fig-title">Median seconds from a big pitch to the first trade past halfway, by month</span></div>
+    <div class="legend"><span><i class="dot" style="background:var(--red)"></i>2025</span><span><i class="dot" style="background:var(--blue)"></i>2026</span></div>
+    <div class="chart" id="fig-monthly"></div>
+  </div>
+</figure>
+
+<section id="checks">
+  <h2><span class="no">VII</span>Checks and limits</h2>
+  <div class="prose">
+    <p><strong>A simulated market with known answers.</strong> Kalshi&rsquo;s archive keeps trades, not quotes, so every price here is read off the tape: a taker who buys pays the ask, one who sells hits the bid, and the latest of each brackets the midpoint. To check that this measures what I say it does, I simulate {{sim_games}} games where the truth is known: a fair value that jumps after each pitch, makers who reprice after random delays, noise traders at the real tape&rsquo;s rates, and fast traders who hit stale quotes. The first trade past halfway always comes after the true repricing, by a median of {{sim_lag}} seconds; the curve read off the trades trails the true quotes by at most {{sim_gap}} of the move and has caught up within seven seconds (Fig. 10); and the makers&rsquo; one-minute profits come back within {{sim_markout}} of the truth.</p>
+  </div>
+</section>
+<figure class="plate">
+  <div class="plate-inner">
+    <div class="fig-head"><span class="fig-no">Fig. 10</span><span class="fig-title">On a simulated market: the true quotes and what the trades show</span></div>
+    <div class="legend"><span><i style="background:var(--red)"></i>true quotes (known in the simulation)</span><span><i style="background:var(--blue)"></i>read off the trades</span></div>
+    <div class="chart" id="fig-sim"></div>
+  </div>
+</figure>
+<section>
+  <div class="prose">
+    <p><strong>A placebo.</strong> Moving each pitch ten seconds early, the price drifts {{placebo}} of the coming move (95% interval {{placebo_lo}} to {{placebo_hi}}). Nothing leaks before the pitch.</p>
+    <p><strong>No look-ahead.</strong> The price before a pitch uses only trades from more than a second before it. Every Kalshi market is matched to its MLB game by teams, date and the moment the market closed, which Kalshi does right after the final out, and every matched market settled the way the final score says it should: {{settle26}} in 2026 and {{settle25}} in 2025.</p>
+    <p><strong>Limits.</strong> Quotes are seen only when someone trades against them, so the times here are upper bounds by a fraction of a second. The clock is MLB&rsquo;s own pitch timestamp, and whatever delay MLB&rsquo;s system has is inside every number. The fair move comes from an average-team model shifted to the market&rsquo;s view, which ignores who is batting and pitching. One-minute markouts include the next few pitches&rsquo; news, which averages out but adds noise. Fees follow Kalshi&rsquo;s published schedule for this series. This is one exchange, and nothing here is a recommendation to trade.</p>
+  </div>
+</section>
+
+<section id="method">
+  <h2><span class="no">VIII</span>Data and code</h2>
+  <div class="prose">
+    <p>Everything on this page is produced by one pipeline: <code>make data</code> downloads the trades (Kalshi&rsquo;s public trade API), the play-by-play with both pitch timestamps (MLB Stats API) and the pitch-level game states and win expectancy (Baseball Savant); <code>make all</code> builds the tables, runs the event study, the analysis, the simulation and {{n_tests}} tests, and writes this page, filling every number from the outputs. The raw trades stay on disk and are not republished; the code, the method and the aggregated results are on <a href="{{repo}}">GitHub</a>.</p>
+    <p><strong>Related work.</strong> The idea that a resting quote is a free option for better-informed traders is Copeland and Galai&rsquo;s (&ldquo;Information Effects on the Bid-Ask Spread,&rdquo; <i>Journal of Finance</i>, 1983). Measuring the races to pick off stale quotes from exchange messages is Aquilina, Budish and O&rsquo;Neill&rsquo;s (&ldquo;Quantifying the High-Frequency Trading &lsquo;Arms Race&rsquo;,&rdquo; <i>Quarterly Journal of Economics</i>, 2022). The closest study in sports is Croxson and Reade&rsquo;s, on how betting-exchange prices absorb goals in soccer (&ldquo;Information and Efficiency: Goal Arrival in Soccer Betting,&rdquo; <i>Economic Journal</i>, 2014). Baseball adds a pitch-level clock and a fair value for every pitch.</p>
+  </div>
+</section>
+</main>
+
+<footer>
+  <div class="cols">
+    <div>Austin Gentile, Centre College. Questions and corrections are welcome on <a href="{{repo}}">GitHub</a>.</div>
+    <div>Data: Kalshi, MLB Stats API, Baseball Savant. Not affiliated with Kalshi, MLB, or any club.</div>
+  </div>
+</footer>
+
+<script src="assets/charts.js"></script>
+<script src="assets/figures.js"></script>
+<script>
+  (() => {
+    const b = document.getElementById("theme");
+    const dark = () => document.documentElement.dataset.theme ? document.documentElement.dataset.theme === "dark"
+      : matchMedia("(prefers-color-scheme: dark)").matches;
+    const label = () => (b.textContent = dark() ? "Light" : "Dark");
+    label();
+    b.addEventListener("click", () => {
+      const t = dark() ? "light" : "dark";
+      document.documentElement.dataset.theme = t;
+      try { localStorage.setItem("rp-theme", t); } catch (e) {}
+      label();
+      window.dispatchEvent(new Event("themechange"));
+    });
+    matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => { label(); window.dispatchEvent(new Event("themechange")); });
+  })();
+</script>
+</body>
+</html>
