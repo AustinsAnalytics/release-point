@@ -1,4 +1,8 @@
-data/
+data/*
+!data/out/
+data/out/*
+!data/out/results.json
+!data/out/simulation.json
 __pycache__/
 .pytest_cache/
 *.part
